@@ -19,7 +19,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 
 genai.configure(api_key=GEMINI_API_KEY)
-GEMINI_MODEL_NAME = "gemini-3.5-flash"  # موديل مجاني وسريع، مناسب للمحادثة
+GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"  # موديل أسرع بكتير، مناسب للردود السريعة
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -181,6 +181,15 @@ def contains_crisis_keyword(text: str) -> bool:
     return any(keyword in text_lower for keyword in CRISIS_KEYWORDS)
 
 
+# كلمات تستدعي رد البوت جوه الجروبات (بأي شكل من أشكال "أنيس")
+BOT_MENTION_WORDS = ["أنيس", "انيس", "aneesbot", "anees"]
+
+
+def message_mentions_bot(text: str) -> bool:
+    text_lower = text.lower()
+    return any(word.lower() in text_lower for word in BOT_MENTION_WORDS)
+
+
 # ================= Gemini: توليد الرد =================
 
 def call_gemini(system_prompt: str, history: list) -> str:
@@ -243,8 +252,8 @@ def maybe_update_profile(chat_id: int):
 # ================= أوامر البوت =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    ensure_user(chat_id)
+    user_id = update.effective_user.id
+    ensure_user(user_id)
     await update.message.reply_text(
         "أهلاً بيك 💙 أنا أنيس، هنا أسمعك وأساعدك ترتب أفكارك.\n"
         "ملحوظة مهمة: أنا مش بديل عن معالج نفسي متخصص، لو محتاج مساعدة عاجلة كلم مختص فورًا.\n\n"
@@ -271,15 +280,15 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chat_id = query.message.chat_id
+    user_id = update.effective_user.id
     score = int(query.data.split("_")[1])
-    save_mood(chat_id, score)
+    save_mood(user_id, score)
     await query.edit_message_text(f"تمام، سجلت مزاجك النهاردة: {score}/5 🙏\nتقدر تشوف تطور مزاجك بـ /chart")
 
 
 async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    moods = get_moods(chat_id)
+    user_id = update.effective_user.id
+    moods = get_moods(user_id)
     if len(moods) < 2:
         await update.message.reply_text(
             "لسه معنديش بيانات كفاية عشان أرسملك تطور مزاجك. سجّل مزاجك كل يوم بـ /mood 🙂"
@@ -297,7 +306,7 @@ async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plt.title("تطور مزاجك بمرور الوقت")
     plt.tight_layout()
 
-    chart_path = f"/tmp/mood_chart_{chat_id}.png"
+    chart_path = f"/tmp/mood_chart_{user_id}.png"
     plt.savefig(chart_path)
     plt.close()
 
@@ -308,31 +317,44 @@ async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= الرسائل العادية =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user_text = update.message.text
-    ensure_user(chat_id)
+    is_group = update.effective_chat.type in ("group", "supergroup")
+    user_text = update.message.text or ""
 
-    user = get_user_profile(chat_id)
-    if user and not user["name"] and user["message_count"] == 0 and len(user_text.split()) <= 4:
-        set_user_name(chat_id, user_text.strip())
+    if is_group:
+        # جوه الجروب: رد بس لو حد ناداه بالاسم أو رد على رسالة البوت نفسه
+        replied_to_bot = (
+            update.message.reply_to_message is not None
+            and update.message.reply_to_message.from_user is not None
+            and update.message.reply_to_message.from_user.id == context.bot.id
+        )
+        if not (message_mentions_bot(user_text) or replied_to_bot):
+            return
+
+    # نستخدم user_id (مش chat_id) عشان كل شخص في الجروب يبقى له ملف وذاكرة منفصلة
+    user_id = update.effective_user.id
+    ensure_user(user_id)
+
+    user = get_user_profile(user_id)
+    if not is_group and user and not user["name"] and user["message_count"] == 0 and len(user_text.split()) <= 4:
+        set_user_name(user_id, user_text.strip())
         await update.message.reply_text(f"تشرفت بيك يا {user_text.strip()} 💙 احكيلي، عايز تتكلم عن إيه؟")
-        save_message(chat_id, "user", user_text)
+        save_message(user_id, "user", user_text)
         return
 
     if contains_crisis_keyword(user_text):
         await update.message.reply_text(CRISIS_MESSAGE)
 
-    save_message(chat_id, "user", user_text)
-    history = get_recent_messages(chat_id)
+    save_message(user_id, "user", user_text)
+    history = get_recent_messages(user_id)
 
     try:
-        reply_text = call_gemini(build_personalized_system_prompt(chat_id), history)
+        reply_text = call_gemini(build_personalized_system_prompt(user_id), history)
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}")
         reply_text = "معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏"
 
-    save_message(chat_id, "assistant", reply_text)
-    maybe_update_profile(chat_id)
+    save_message(user_id, "assistant", reply_text)
+    maybe_update_profile(user_id)
 
     await update.message.reply_text(reply_text)
 
