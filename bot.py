@@ -44,6 +44,7 @@ CRISIS_MESSAGE = (
     "08008880700 (من أي خط أرضي - مجاني)\n"
     "0220816831 (من أي موبايل)\n"
     "📞 المجلس القومي للصحة النفسية: 20818102\n\n"
+    "وممكن كمان تكلم حد على تليجرام دلوقتي على طول: @I_INW\n\n"
     "الخطوط دي شغالة طول اليوم وبسرية تامة. ممكن كمان تكلم حد قريب منك تثق فيه دلوقتي.\n"
     "أنا هنا أفضل أسمعك، بس مهم جدًا تكلم حد متخصص كمان."
 )
@@ -61,6 +62,7 @@ BASE_SYSTEM_PROMPT = """
 قواعد أساسية لازم تتبعها دايمًا:
 1. متشخصش أي حالة نفسية للمستخدم (زي اكتئاب، قلق، اضطراب...) حتى لو حسيت إنها كده. اوصف الشعور من غير ما تحط تسمية طبية.
 2. لو حسيت إن الشخص في خطر (أفكار إيذاء نفس، انتحار)، وجهه فورًا للخط الساخن ولخصوصية شخص يثق فيه، وابقى هادي وداعم مش مستجوب.
+2ب. لو حسيت إن الشخص تعبان نفسيًا بشكل واضح ومستمر (زي حاسس إنه مخنوق، ضايع، مش قادر يستحمل أكتر) حتى لو مش أزمة لحظية، اقترح عليه بلطف ومن غير إلحاح إنه يتواصل مع حد حقيقي على تليجرام: @I_INW، عشان يلاقي دعم أعمق من مجرد الكلام معاك.
 3. متكررش كلام المستخدم السلبي بطريقة تكبره أو تعمقه أكتر. سمعه لكن وجهه لمسار إيجابي.
 4. لو المستخدم بيسأل عن حاجة تقنية زي جرعات أدوية أو طرق إيذاء نفس، امنعها ووجهه لطبيب/مختص.
 5. ذكّره بلطف بين فترة وفترة إن الكلام مع معالج نفسي حقيقي مهم لو استمرت الحالة.
@@ -101,9 +103,41 @@ MOTIVATIONAL_QUOTES = [
     "بكرة يوم جديد، وإنت مسموح تاخد وقتك عشان توصله. ✨",
 ]
 
+# ---------- ألعاب حقيقية للتسلية ----------
+
+PROVERBS = [
+    {"prompt": "اللي اختشوا...", "answer_keywords": ["ماتوا"], "full": "اللي اختشوا ماتوا"},
+    {"prompt": "القرد في عين أمه...", "answer_keywords": ["غزال"], "full": "القرد في عين أمه غزال"},
+    {"prompt": "يد واحدة...", "answer_keywords": ["تصفقش", "تصفق"], "full": "يد واحدة ماتصفقش"},
+    {"prompt": "اللي فاته الفوت...", "answer_keywords": ["اتحيل", "يتحيل"], "full": "اللي فاته الفوت اتحيل عليه"},
+    {"prompt": "ابعد عن الشر...", "answer_keywords": ["غنيله", "غني له"], "full": "ابعد عن الشر وغنيله"},
+    {"prompt": "اللي ميعرفش يقول...", "answer_keywords": ["عدس", "قالها عدس"], "full": "اللي ميعرفكش يقول عدس"},
+    {"prompt": "قرد ورقص...", "answer_keywords": ["حلاوة"], "full": "قرد ورقص وقالوله يا حلاوة"},
+    {"prompt": "دبور ولا شهد...", "answer_keywords": ["ندبنيش"], "full": "دبور ولا شهد يندبني... (مثل: القرش الأبيض ولا القرش الأسود)"},
+]
+
+RIDDLES = [
+    {"q": "إيه اللي بيزيد وهو واقف وينقص وهو نايم؟", "answer_keywords": ["قدم", "رجل", "الانسان الواقف"], "explain": "الإنسان (طوله وهو واقف أطول)"},
+    {"q": "شيء كل ما تاخد منه يكبر؟", "answer_keywords": ["حفرة", "حفره", "جورة"], "explain": "الحفرة"},
+    {"q": "بيت من غير أبواب ولا شبابيك؟", "answer_keywords": ["بيضة", "بيضه"], "explain": "البيضة"},
+    {"q": "إيه اللي ليه أسنان ومابيعضش؟", "answer_keywords": ["مشط"], "explain": "المشط"},
+    {"q": "شيء تملّه بإيد وتفضّه بإيد؟", "answer_keywords": ["حزام", "رباط", "زرار"], "explain": "الحزام أو الرباط"},
+    {"q": "إيه اللي بيمشي طول عمره وماوصلش؟", "answer_keywords": ["نهر", "الوقت", "الزمن"], "explain": "النهر أو الزمن"},
+]
+
+TRIVIA_QUESTIONS = [
+    {"statement": "القاهرة هي أكبر مدينة في أفريقيا من حيث عدد السكان.", "is_true": True},
+    {"statement": "نهر النيل هو أطول نهر في العالم.", "is_true": True},
+    {"statement": "الأهرامات موجودة في مدينة الأقصر.", "is_true": False},
+    {"statement": "القطط تقدر تشوف في الضلمة تمامًا زي النهار بالظبط.", "is_true": False},
+    {"statement": "العسل ممكن يفضل صالح لآلاف السنين من غير ما يبوظ.", "is_true": True},
+    {"statement": "جسم الإنسان فيه أكتر من 600 عضلة.", "is_true": True},
+    {"statement": "الموز نوع من التوت (Berry) من الناحية النباتية.", "is_true": True},
+]
+
 BASE_SYSTEM_PROMPT_EXTRA_GAMES_HINT = (
     "\nملحوظة: لو المستخدم قال إنه زهقان أو محتاج حاجة تلهيه أو تهون عليه، ممكن تقترح عليه يجرب أوامر "
-    "البوت زي /gratitude أو /grounding أو /joke."
+    "البوت زي /gratitude أو /grounding أو /joke أو ألعاب تسلية زي /trivia و /riddle و /proverb."
 )
 BASE_SYSTEM_PROMPT += BASE_SYSTEM_PROMPT_EXTRA_GAMES_HINT
 
@@ -390,14 +424,82 @@ async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= تمارين ولعبة تغيير المود =================
 
+async def start_proverb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    item = random.choice(PROVERBS)
+    context.user_data["awaiting"] = "proverb"
+    context.user_data["awaiting_data"] = item
+    await update.effective_message.reply_text(f"كمّل المثل ده يا نجم 🧠:\n\n\"{item['prompt']} ______\"")
+
+
+async def start_riddle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    item = random.choice(RIDDLES)
+    context.user_data["awaiting"] = "riddle"
+    context.user_data["awaiting_data"] = item
+    await update.effective_message.reply_text(f"فزّورة 🤔:\n\n{item['q']}")
+
+
+async def start_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    item = random.choice(TRIVIA_QUESTIONS)
+    context.user_data["trivia_answer"] = item["is_true"]
+    kb = [[
+        InlineKeyboardButton("✅ صح", callback_data="trivia_true"),
+        InlineKeyboardButton("❌ غلط", callback_data="trivia_false"),
+    ]]
+    await update.effective_message.reply_text(
+        f"صح ولا غلط؟ 🤓\n\n\"{item['statement']}\"",
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+async def start_joke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(random.choice(JOKES))
+
+
+async def start_gratitude(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(GRATEFUL_PROMPT)
+
+
+async def start_grounding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(GROUNDING_TEXT)
+
+
+# كلمات طبيعية تفتح اللعبة من غير ما تكتب / أوامر - المطابقة بتكون للنص كامل (بعد شيل المسافات)
+GAME_TRIGGERS = {
+    "فزورة": start_riddle, "فزوره": start_riddle, "لغز": start_riddle,
+    "مثل": start_proverb, "مثال": start_proverb, "امثال": start_proverb, "أمثال": start_proverb,
+    "سؤال": start_trivia, "اسئلة": start_trivia, "أسئلة": start_trivia, "تريفيا": start_trivia,
+    "نكتة": start_joke, "نكته": start_joke,
+    "امتنان": start_gratitude,
+    "تهدئة": start_grounding,
+}
+
+
+async def maybe_start_game_by_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    text_norm = (update.message.text or "").strip()
+    handler = GAME_TRIGGERS.get(text_norm)
+    if handler is None:
+        return False
+    # لو كان في نص لعبة تانية مستنية إجابة، نلغيها ونبدأ اللعبة الجديدة
+    context.user_data["awaiting"] = None
+    context.user_data["awaiting_data"] = None
+    await handler(update, context)
+    return True
+
+
 async def games_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
+        [InlineKeyboardButton("🧠 كمّل المثل", callback_data="game_proverb")],
+        [InlineKeyboardButton("🤔 فزّورة", callback_data="game_riddle")],
+        [InlineKeyboardButton("🤓 صح ولا غلط", callback_data="game_trivia")],
         [InlineKeyboardButton("🌬️ تمرين تنفس", callback_data="game_breathe")],
         [InlineKeyboardButton("🌿 تمرين امتنان", callback_data="game_gratitude")],
         [InlineKeyboardButton("🧘 تمرين تهدئة (5-4-3-2-1)", callback_data="game_grounding")],
         [InlineKeyboardButton("😄 نكتة تهون عليك", callback_data="game_joke")],
     ]
-    await update.message.reply_text("عايز نعمل إيه دلوقتي؟", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "عايز نعمل إيه دلوقتي؟ (أو تقدر تكتبلي عادي كلمة زي \"فزورة\" أو \"مثل\" أو \"سؤال\" وأنا هفهمك)",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 
 async def games_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -407,23 +509,88 @@ async def games_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if choice == "game_breathe":
         await run_breathing_exercise(update, context, use_query=True)
     elif choice == "game_gratitude":
-        await query.message.reply_text(GRATEFUL_PROMPT)
+        await start_gratitude(update, context)
     elif choice == "game_grounding":
-        await query.message.reply_text(GROUNDING_TEXT)
+        await start_grounding(update, context)
     elif choice == "game_joke":
-        await query.message.reply_text(random.choice(JOKES))
+        await start_joke(update, context)
+    elif choice == "game_proverb":
+        await start_proverb(update, context)
+    elif choice == "game_riddle":
+        await start_riddle(update, context)
+    elif choice == "game_trivia":
+        await start_trivia(update, context)
 
 
 async def gratitude_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(GRATEFUL_PROMPT)
+    await start_gratitude(update, context)
 
 
 async def grounding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(GROUNDING_TEXT)
+    await start_grounding(update, context)
 
 
 async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(random.choice(JOKES))
+    await start_joke(update, context)
+
+
+async def proverb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_proverb(update, context)
+
+
+async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_riddle(update, context)
+
+
+async def trivia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_trivia(update, context)
+
+
+async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_answer = query.data == "trivia_true"
+    correct_answer = context.user_data.get("trivia_answer")
+    if correct_answer is None:
+        await query.edit_message_text("السؤال ده خلص، اطلب سؤال جديد بـ /trivia 🙂")
+        return
+    if user_answer == correct_answer:
+        result = "إجابة صح! 🎉"
+    else:
+        correct_word = "صح" if correct_answer else "غلط"
+        result = f"للأسف غلط، الإجابة الصحيحة كانت: {correct_word} 😄"
+    context.user_data["trivia_answer"] = None
+    await query.edit_message_text(f"{result}\n\nعايز سؤال تاني؟ اكتب /trivia")
+
+
+async def try_handle_game_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """لو المستخدم في نص لعبة (فزورة/مثل)، نتحقق من إجابته. بترجع True لو استهلكنا الرسالة."""
+    awaiting = context.user_data.get("awaiting")
+    if awaiting not in ("proverb", "riddle"):
+        return False
+
+    item = context.user_data.get("awaiting_data") or {}
+    user_text_norm = (update.message.text or "").strip().lower()
+    keywords = item.get("answer_keywords", [])
+    is_correct = any(kw.lower() in user_text_norm for kw in keywords)
+
+    context.user_data["awaiting"] = None
+    context.user_data["awaiting_data"] = None
+
+    if awaiting == "proverb":
+        full = item.get("full", "")
+        if is_correct:
+            await update.message.reply_text(f"تمام كده! 🎉 \"{full}\"\nعايز مثل تاني؟ /proverb")
+        else:
+            await update.message.reply_text(f"قريبة بس مش بالظبط 😄 الإجابة كانت: \"{full}\"\nجرب تاني؟ /proverb")
+    else:  # riddle
+        explain = item.get("explain", "")
+        if is_correct:
+            await update.message.reply_text(f"جامد جدًا! 🎉 الإجابة: {explain}\nفزورة تانية؟ /riddle")
+        else:
+            await update.message.reply_text(f"مش هي 😄 الإجابة كانت: {explain}\nجرب فزورة تانية؟ /riddle")
+
+    return True
 
 
 async def run_breathing_exercise(update: Update, context: ContextTypes.DEFAULT_TYPE, use_query: bool = False):
@@ -519,6 +686,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (message_mentions_bot(user_text) or replied_to_bot):
             return
 
+    # لو المستخدم كتب كلمة زي "فزورة"/"مثل"/"سؤال" عادي (من غير أوامر)، ابدأ اللعبة على طول
+    if await maybe_start_game_by_trigger(update, context):
+        return
+
+    # لو المستخدم في نص لعبة فزورة/مثل، نتحقق من إجابته
+    if await try_handle_game_answer(update, context):
+        return
+
     user_id = update.effective_user.id
     ensure_user(user_id, private_chat_id=update.effective_chat.id if is_private else None)
     touch_last_active(user_id)
@@ -560,9 +735,13 @@ def main():
     app.add_handler(CommandHandler("grounding", grounding_command))
     app.add_handler(CommandHandler("joke", joke_command))
     app.add_handler(CommandHandler("breathe", breathe_command))
+    app.add_handler(CommandHandler("proverb", proverb_command))
+    app.add_handler(CommandHandler("riddle", riddle_command))
+    app.add_handler(CommandHandler("trivia", trivia_command))
 
     app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"))
     app.add_handler(CallbackQueryHandler(games_callback, pattern="^game_"))
+    app.add_handler(CallbackQueryHandler(trivia_callback, pattern="^trivia_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
