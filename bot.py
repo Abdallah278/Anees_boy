@@ -19,7 +19,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 
 genai.configure(api_key=GEMINI_API_KEY)
-GEMINI_MODEL_NAME = "gemini-2.5-flash"  # موديل مجاني وسريع، مناسب للمحادثة
+GEMINI_MODEL_NAME = "gemini-3.5-flash"  # موديل مجاني وسريع، مناسب للمحادثة
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
