@@ -617,7 +617,7 @@ async def start_grounding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= تذكير شخصي (فكّرني) =================
 
 REMINDER_TIME_PATTERN = re.compile(
-    r"بعد\s*(\d+)\s*(دقيقة|دقايق|دقيقه|ساعة|ساعه|ساعات|يوم|أيام|ايام)"
+    r"(?:بعد\s*)?(\d+)\s*(دقيقة|دقايق|دقيقه|ساعة|ساعه|ساعات|يوم|أيام|ايام)"
 )
 UNIT_TO_SECONDS = {
     "دقيقة": 60, "دقايق": 60, "دقيقه": 60,
