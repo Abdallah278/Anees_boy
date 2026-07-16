@@ -33,6 +33,9 @@ MAX_HISTORY_MESSAGES = 40
 PROFILE_UPDATE_EVERY = 4
 INACTIVITY_DAYS = 3  # بعد كام يوم صمت نبعت تذكير
 
+# آي دي الأدمن (صاحب البوت) - غيّره من هنا مباشرة لو عايز تضيف أدمن تاني أو تغيّره
+ADMIN_USER_ID = 2057835002
+
 CRISIS_KEYWORDS = [
     "انتحار", "هقتل نفسي", "عايز اموت", "مش عايز اعيش",
     "هموت نفسي", "مفيش فايدة من حياتي", "هاذي نفسي",
@@ -70,7 +73,21 @@ BASE_SYSTEM_PROMPT = """
 6. خليك مختصر ودافئ، مش محاضرات طويلة. جملتين تلاتة كل مرة عادةً، واسأل سؤال واحد بس لو محتاج توضيح.
 7. لو حد سألك حاجة برا نطاق الدعم النفسي والمشاعر (زي أسئلة عامة، واجبات مدرسية، برمجة، أخبار، وصفات طعام، إلخ)، اعتذر بلطف وقول إن دورك محصور في الاستماع والدعم النفسي بس، وارجع بلطف تسأله عن حاله أو عن اللي في بالكم. متجاوبش على السؤال الخارجي حتى لو كان بسيط.
 8. لو جالك في "ملف المستخدم" أسماء أشخاص أو مواقف اتكلم عنها المستخدم قبل كده (زي مشكلة مع صاحبه أو موقف معين)، واتكلم دلوقتي عن حاجة ممكن تكون مرتبطة بيها، اربط بينهم بشكل طبيعي في ردك (زي "لسه في نفس الموضوع بتاع صاحبك؟") بدل ما تتعامل مع كل رسالة كأنها منفصلة. الهدف إنك تحس المستخدم إنك فاكر السياق، مش بس بتسمع الرسالة الحالية لوحدها.
-9. ممكن تستخدم آية قرآنية أو حديث شريف بشكل طبيعي ولطيف لما يكون فعلاً مناسب للموقف ومضيف طمأنينة حقيقية - مش في كل رسالة، وبس لما تحس إنه يزيد الكلام جمال وسكينة مش يفتعله. اكتب الآية أو الحديث بدقة، وبعدها اتكلم بكلامك العادي وواصل تسمع وتتعاطف. **مهم جدًا:** الآية أو الحديث لازم يكون إضافة لكلامك الدافئ مش بديل عنه، وممنوع تستخدمه عشان "تقفل" كلام الشخص أو تقلل من حجم اللي بيحس بيه (زي إنك تقوله "بس ادعو ربنا وخلاص" كرد على ألم حقيقي) - ده بيحس الشخص إنك مش فاهمه.
+9. **قاعدة أساسية مش اختيارية:** لو الشخص عبّر عن ضيق نفسي واضح - استخدم كلمات زي "مخنوق"، "زهقان"، "تعبان نفسيًا"، "ضايع"، "مش قادر أستحمل"، "قلقان"، "خايف" - لازم ردك يتضمن آية قرآنية أو حديث شريف مناسب للموقف، مكتوب بدقة، كجزء طبيعي من الرد مش إضافة منفصلة. اربطها بكلامك العادي وواصل تسمع وتتعاطف بعدها. الأمثلة تحت توضح الأسلوب بالظبط. **مهم جدًا:** الآية أو الحديث إضافة لكلامك الدافئ مش بديل عنه، وممنوع تستخدمه عشان "تقفل" كلام الشخص أو تقلل من حجم اللي بيحس بيه (زي إنك تقوله "بس ادعو ربنا وخلاص") - ده بيحس الشخص إنك مش فاهمه. في المواضيع اللي مفيهاش ضيق واضح (زي أسئلة عامة أو كلام عادي)، متقحمش آيات بالعافية.
+
+أمثلة على الأسلوب المطلوب بالظبط:
+
+مثال 1:
+المستخدم: "أنا مخنوق أوي مش عارف أعمل إيه"
+ردك: "حاسس بيك بجد، الخناقة دي تعبانة. زي ما ربنا قال على لسان سيدنا موسى: 'رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي' - حتى الأنبياء حسوا بالضيق واحتاجوا يدعوا بيه. احكيلي إيه اللي مخنوقك بالظبط؟"
+
+مثال 2:
+المستخدم: "أنا خايف جدًا من المستقبل ومش عارف هعمل إيه"
+ردك: "الخوف من المجهول إحساس طبيعي جدًا وكل الناس بتمر بيه. فاكر قول ربنا 'وَمَنْ يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ' - مش معناها متخططش، معناها إنك مش لازم تحمل كل التفاصيل لوحدك. إيه بالظبط اللي مقلقك في المستقبل؟"
+
+مثال 3:
+المستخدم: "زهقان من نفسي ومن كل حاجة حواليا"
+ردك: "الزهق ده حقيقي ومحتاج وقفة. النبي ﷺ قال 'إن لبدنك عليك حقًا' - يعني حتى راحتك من حقك مش رفاهية. إيه اللي مزهقك أكتر دلوقتي؟"
 """
 
 # محتوى ثابت لتمارين ولعبة تغيير المود (من غير الحاجة لاتصال إنترنت وقت التشغيل)
@@ -186,6 +203,18 @@ def init_db():
     _add_column_if_missing(conn, "users", "private_chat_id", "INTEGER")
     _add_column_if_missing(conn, "users", "last_active_at", "TEXT")
     _add_column_if_missing(conn, "users", "last_reminder_at", "TEXT")
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS banned_users (
+        user_id INTEGER PRIMARY KEY,
+        banned_at TEXT
+    )
+    """)
     conn.commit()
     conn.close()
 
@@ -300,6 +329,117 @@ def mark_reminder_sent(user_id: int):
     )
     conn.commit()
     conn.close()
+
+
+def get_setting(key: str, default: str = "on") -> str:
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    conn = get_db()
+    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", (key, value, value))
+    conn.commit()
+    conn.close()
+
+
+def get_total_users_count() -> int:
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()
+    conn.close()
+    return row["c"]
+
+
+def get_total_messages_count() -> int:
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) as c FROM messages").fetchone()
+    conn.close()
+    return row["c"]
+
+
+def get_active_today_count() -> int:
+    conn = get_db()
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    row = conn.execute("SELECT COUNT(*) as c FROM users WHERE last_active_at >= ?", (today_start,)).fetchone()
+    conn.close()
+    return row["c"]
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_USER_ID
+
+
+def ban_user(user_id: int):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO banned_users (user_id, banned_at) VALUES (?, ?) ON CONFLICT(user_id) DO NOTHING",
+        (user_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def unban_user(user_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def is_user_banned(user_id: int) -> bool:
+    conn = get_db()
+    row = conn.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+# كلمات تستدعي تنبيه الأدمن (رقابة محتوى أساسية - قائمة قابلة للتوسيع)
+FLAGGED_WORDS = ["كس", "طيز", "زبر", "لبوة", "شرموطة", "متناك", "خول"]
+
+
+def contains_flagged_word(text: str) -> bool:
+    text_norm = normalize_arabic(text)
+    return any(normalize_arabic(w) in text_norm for w in FLAGGED_WORDS)
+
+
+async def notify_admin_flagged_message(context: ContextTypes.DEFAULT_TYPE, update: Update):
+    if ADMIN_USER_ID == 0:
+        return
+    sender = update.effective_user
+    sender_name = sender.full_name or sender.username or str(sender.id)
+    chat_label = "جروب" if update.effective_chat.type in ("group", "supergroup") else "شات خاص"
+    keyboard = [[
+        InlineKeyboardButton("🚫 حظر", callback_data=f"modban_{sender.id}"),
+        InlineKeyboardButton("✅ تجاهل", callback_data=f"modignore_{sender.id}"),
+    ]]
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_USER_ID,
+            text=(
+                f"⚠️ رسالة فيها لفظ مخل ({chat_label})\n"
+                f"من: {sender_name}\n"
+                f"قال: \"{update.message.text}\""
+            ),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify admin: {e}")
+
+
+async def moderation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        return
+    action, target_id_str = query.data.split("_", 1)
+    target_id = int(target_id_str)
+    if action == "modban":
+        ban_user(target_id)
+        await query.edit_message_text(query.message.text + "\n\n🚫 تم الحظر.")
+    else:
+        await query.edit_message_text(query.message.text + "\n\n✅ اتجاهلت.")
 
 
 def contains_crisis_keyword(text: str) -> bool:
@@ -474,6 +614,73 @@ async def start_grounding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # كلمات طبيعية تفتح اللعبة من غير ما تكتب / أوامر - المطابقة بتكون للنص كامل (بعد شيل المسافات)
+# ================= تذكير شخصي (فكّرني) =================
+
+REMINDER_TIME_PATTERN = re.compile(
+    r"بعد\s*(\d+)\s*(دقيقة|دقايق|دقيقه|ساعة|ساعه|ساعات|يوم|أيام|ايام)"
+)
+UNIT_TO_SECONDS = {
+    "دقيقة": 60, "دقايق": 60, "دقيقه": 60,
+    "ساعة": 3600, "ساعه": 3600, "ساعات": 3600,
+    "يوم": 86400, "أيام": 86400, "ايام": 86400,
+}
+
+
+async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"⏰ فاكرك: {job.data['message']}")
+
+
+async def try_handle_reminder_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    text = (update.message.text or "").strip()
+    state = context.user_data.get("remind_state")
+
+    if state is None and text in ("فكرني", "فكّرني", "ذكرني"):
+        context.user_data["remind_state"] = "awaiting_message"
+        await update.message.reply_text("تمام، فكّرك بإيه؟ اكتب الرسالة اللي عايزني أبعتهالك.")
+        return True
+
+    if state == "awaiting_message":
+        context.user_data["remind_message"] = text
+        context.user_data["remind_state"] = "awaiting_time"
+        await update.message.reply_text(
+            "تمام، وامتى تحب أفكرك؟ اكتب زي كده:\n"
+            "\"بعد 10 دقايق\" أو \"بعد ساعتين\" أو \"بعد يوم\""
+        )
+        return True
+
+    if state == "awaiting_time":
+        match = REMINDER_TIME_PATTERN.search(text)
+        if not match:
+            await update.message.reply_text(
+                "معلش مفهمتش الوقت 🙏 اكتبه زي كده: \"بعد 10 دقايق\" أو \"بعد 3 ساعات\" أو \"بعد يوم\""
+            )
+            return True
+
+        amount = int(match.group(1))
+        unit = match.group(2)
+        seconds = amount * UNIT_TO_SECONDS[unit]
+        message = context.user_data.get("remind_message", "")
+
+        context.job_queue.run_once(
+            send_reminder_job,
+            when=seconds,
+            data={"chat_id": update.effective_chat.id, "message": message},
+        )
+
+        context.user_data["remind_state"] = None
+        context.user_data["remind_message"] = None
+        await update.message.reply_text(f"تمام ✅ هفكرك بـ \"{message}\" بعد {amount} {unit}")
+        return True
+
+    return False
+
+
+async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["remind_state"] = "awaiting_message"
+    await update.message.reply_text("تمام، فكّرك بإيه؟ اكتب الرسالة اللي عايزني أبعتهالك.")
+
+
 GAME_TRIGGERS = {
     "فزورة": start_riddle, "فزوره": start_riddle, "لغز": start_riddle,
     "مثل": start_proverb, "مثال": start_proverb, "امثال": start_proverb, "أمثال": start_proverb,
@@ -634,6 +841,8 @@ async def breathe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= مهام مجدولة: check-in يومي / تذكير / ملخص أسبوعي =================
 
 async def daily_checkin_job(context: ContextTypes.DEFAULT_TYPE):
+    if get_setting("checkin_enabled") == "off":
+        return
     for user in get_all_private_users():
         name_part = f" يا {user['name']}" if user["name"] else ""
         try:
@@ -646,6 +855,8 @@ async def daily_checkin_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def inactivity_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    if get_setting("reminder_enabled") == "off":
+        return
     now = datetime.now(timezone.utc)
     for user in get_all_private_users():
         if not user["last_active_at"]:
@@ -702,6 +913,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = update.effective_chat.type in ("group", "supergroup")
     is_private = update.effective_chat.type == "private"
     user_text = update.message.text or ""
+    user_id = update.effective_user.id
+
+    # مستخدم محظور: نتجاهله تمامًا
+    if is_user_banned(user_id):
+        return
 
     if is_group:
         replied_to_bot = (
@@ -712,6 +928,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (message_mentions_bot(user_text) or replied_to_bot):
             return
 
+    # أوامر الأدمن بالعربي (بس لو المستخدم أدمن فعلاً)
+    if is_admin(user_id):
+        admin_text = user_text.strip()
+        if admin_text in ("احصائيات", "الاحصائيات"):
+            await stats_command(update, context)
+            return
+        if admin_text in ("لوحة التحكم", "الادمن", "الأدمن"):
+            await admin_command(update, context)
+            return
+
+    # رصد الألفاظ المخلة: نبلغ الأدمن ونكمل عادي (من غير ما نوقف الرد على الشخص)
+    if contains_flagged_word(user_text):
+        await notify_admin_flagged_message(context, update)
+
+    # تذكير شخصي (فكرني...)
+    if await try_handle_reminder_flow(update, context):
+        return
+
     # لو المستخدم كتب كلمة زي "فزورة"/"مثل"/"سؤال" عادي (من غير أوامر)، ابدأ اللعبة على طول
     if await maybe_start_game_by_trigger(update, context):
         return
@@ -720,7 +954,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await try_handle_game_answer(update, context):
         return
 
-    user_id = update.effective_user.id
     ensure_user(user_id, private_chat_id=update.effective_chat.id if is_private else None)
     if is_private:
         touch_last_active(user_id)
@@ -765,6 +998,80 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply_text)
 
 
+# ================= أوامر الأدمن =================
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    checkin_status = "شغال ✅" if get_setting("checkin_enabled") == "on" else "مقفول ⛔"
+    reminder_status = "شغال ✅" if get_setting("reminder_enabled") == "on" else "مقفول ⛔"
+    await update.message.reply_text(
+        "🔧 لوحة تحكم الأدمن:\n\n"
+        "/stats — إحصائيات البوت\n"
+        "/broadcast <رسالة> — بث رسالة لكل المستخدمين\n"
+        "/togglecheckin — تشغيل/إيقاف رسالة الصباح اليومية\n"
+        "/togglereminder — تشغيل/إيقاف تذكير الغياب\n\n"
+        f"حالة Check-in اليومي: {checkin_status}\n"
+        f"حالة تذكير الغياب: {reminder_status}"
+    )
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    total_users = get_total_users_count()
+    total_messages = get_total_messages_count()
+    active_today = get_active_today_count()
+    await update.message.reply_text(
+        "📊 إحصائيات أنيس:\n\n"
+        f"👥 إجمالي المستخدمين: {total_users}\n"
+        f"💬 إجمالي الرسائل: {total_messages}\n"
+        f"🟢 نشطين النهاردة: {active_today}"
+    )
+
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    message_text = " ".join(context.args) if context.args else ""
+    if not message_text:
+        await update.message.reply_text("استخدمه كده: /broadcast الرسالة اللي عايز تبعتها")
+        return
+    users = get_all_private_users()
+    sent, failed = 0, 0
+    for user in users:
+        try:
+            await context.bot.send_message(chat_id=user["private_chat_id"], text=message_text)
+            sent += 1
+        except Exception as e:
+            logger.error(f"Broadcast failed for {user['chat_id']}: {e}")
+            failed += 1
+    await update.message.reply_text(f"تم البث ✅\nوصلت لـ {sent} حد" + (f"، فشلت لـ {failed}" if failed else ""))
+
+
+async def toggle_checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    current = get_setting("checkin_enabled")
+    new_value = "off" if current == "on" else "on"
+    set_setting("checkin_enabled", new_value)
+    await update.message.reply_text(f"Check-in اليومي بقى: {'شغال ✅' if new_value == 'on' else 'مقفول ⛔'}")
+
+
+async def toggle_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    current = get_setting("reminder_enabled")
+    new_value = "off" if current == "on" else "on"
+    set_setting("reminder_enabled", new_value)
+    await update.message.reply_text(f"تذكير الغياب بقى: {'شغال ✅' if new_value == 'on' else 'مقفول ⛔'}")
+
+
 def main():
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -781,9 +1088,17 @@ def main():
     app.add_handler(CommandHandler("riddle", riddle_command))
     app.add_handler(CommandHandler("trivia", trivia_command))
 
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("togglecheckin", toggle_checkin_command))
+    app.add_handler(CommandHandler("togglereminder", toggle_reminder_command))
+    app.add_handler(CommandHandler("remind", remind_command))
+
     app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"))
     app.add_handler(CallbackQueryHandler(games_callback, pattern="^game_"))
     app.add_handler(CallbackQueryHandler(trivia_callback, pattern="^trivia_"))
+    app.add_handler(CallbackQueryHandler(moderation_callback, pattern="^mod(ban|ignore)_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
