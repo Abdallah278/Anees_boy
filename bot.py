@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import asyncio
 import sqlite3
@@ -28,8 +29,8 @@ GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAX_HISTORY_MESSAGES = 20
-PROFILE_UPDATE_EVERY = 8
+MAX_HISTORY_MESSAGES = 40
+PROFILE_UPDATE_EVERY = 4
 INACTIVITY_DAYS = 3  # بعد كام يوم صمت نبعت تذكير
 
 CRISIS_KEYWORDS = [
@@ -68,7 +69,7 @@ BASE_SYSTEM_PROMPT = """
 5. ذكّره بلطف بين فترة وفترة إن الكلام مع معالج نفسي حقيقي مهم لو استمرت الحالة.
 6. خليك مختصر ودافئ، مش محاضرات طويلة. جملتين تلاتة كل مرة عادةً، واسأل سؤال واحد بس لو محتاج توضيح.
 7. لو حد سألك حاجة برا نطاق الدعم النفسي والمشاعر (زي أسئلة عامة، واجبات مدرسية، برمجة، أخبار، وصفات طعام، إلخ)، اعتذر بلطف وقول إن دورك محصور في الاستماع والدعم النفسي بس، وارجع بلطف تسأله عن حاله أو عن اللي في بالكم. متجاوبش على السؤال الخارجي حتى لو كان بسيط.
-8. استخدم أي معلومات عن المستخدم (اسمه، مواضيعه المتكررة) اللي هتيجيلك في سياق "ملف المستخدم" عشان ردك يكون شخصي أكتر، من غير ما تكرر المعلومات دي بشكل غريب أو متكلف.
+8. لو جالك في "ملف المستخدم" أسماء أشخاص أو مواقف اتكلم عنها المستخدم قبل كده (زي مشكلة مع صاحبه أو موقف معين)، واتكلم دلوقتي عن حاجة ممكن تكون مرتبطة بيها، اربط بينهم بشكل طبيعي في ردك (زي "لسه في نفس الموضوع بتاع صاحبك؟") بدل ما تتعامل مع كل رسالة كأنها منفصلة. الهدف إنك تحس المستخدم إنك فاكر السياق، مش بس بتسمع الرسالة الحالية لوحدها.
 """
 
 # محتوى ثابت لتمارين ولعبة تغيير المود (من غير الحاجة لاتصال إنترنت وقت التشغيل)
@@ -110,7 +111,7 @@ PROVERBS = [
     {"prompt": "القرد في عين أمه...", "answer_keywords": ["غزال"], "full": "القرد في عين أمه غزال"},
     {"prompt": "يد واحدة...", "answer_keywords": ["تصفقش", "تصفق"], "full": "يد واحدة ماتصفقش"},
     {"prompt": "اللي فاته الفوت...", "answer_keywords": ["اتحيل", "يتحيل"], "full": "اللي فاته الفوت اتحيل عليه"},
-    {"prompt": "ابعد عن الشر...", "answer_keywords": ["غنيله", "غني له"], "full": "ابعد عن الشر وغنيله"},
+    {"prompt": "ابعد عن الشر...", "answer_keywords": ["غنيله", "غني له", "غنيلو"], "full": "ابعد عن الشر وغنيله"},
     {"prompt": "اللي ميعرفش يقول...", "answer_keywords": ["عدس", "قالها عدس"], "full": "اللي ميعرفكش يقول عدس"},
     {"prompt": "قرد ورقص...", "answer_keywords": ["حلاوة"], "full": "قرد ورقص وقالوله يا حلاوة"},
     {"prompt": "دبور ولا شهد...", "answer_keywords": ["ندبنيش"], "full": "دبور ولا شهد يندبني... (مثل: القرش الأبيض ولا القرش الأسود)"},
@@ -349,12 +350,20 @@ def maybe_update_profile(user_id: int):
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL_NAME,
             system_instruction=(
-                "لخّص المستخدم من المحادثة دي في 2-3 جمل بس: اسمه لو قاله، "
-                "المواضيع أو المشاعر المتكررة عنده، وأي حاجة مهمة تساعد في دعمه بشكل شخصي أكتر. "
-                "رد بالملخص مباشرة من غير مقدمات."
+                "من المحادثة دي، استخرج ملخص مركّز في 3-4 جمل يغطي بالتحديد:\n"
+                "1. اسم المستخدم لو قاله.\n"
+                "2. أي أشخاص محددين ذكرهم (زي صاحبه، أهله، شريك حياته) ودورهم في الموضوع.\n"
+                "3. أي موقف أو مشكلة متكررة بتتفتح في أكتر من رسالة، مع تفاصيلها المهمة (زي سبب الخلاف، تطوره).\n"
+                "4. الحالة النفسية العامة أو المواضيع المتكررة.\n"
+                "لو فيه ملخص سابق موجود في آخر المحادثة، ادمج المعلومات الجديدة معاه من غير ما تفقد أي تفصيلة مهمة "
+                "قالها المستخدم قبل كده عن نفس الشخص أو الموقف. رد بالملخص مباشرة من غير مقدمات، وخليه قصير ومباشر."
             ),
         )
-        response = model.generate_content(convo_text)
+        previous_summary = get_user_profile(user_id)["profile_summary"] if get_user_profile(user_id) else ""
+        prompt_text = convo_text
+        if previous_summary:
+            prompt_text = f"الملخص السابق: {previous_summary}\n\nالمحادثة الجديدة:\n{convo_text}"
+        response = model.generate_content(prompt_text)
         summary = response.text.strip()
         if summary:
             update_user_profile(user_id, summary)
@@ -563,6 +572,17 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"{result}\n\nعايز سؤال تاني؟ اكتب /trivia")
 
 
+def normalize_arabic(text: str) -> str:
+    text = text.strip().lower()
+    text = re.sub(r"[إأآ]", "ا", text)
+    text = text.replace("ة", "ه")
+    text = re.sub(r"\s+", "", text)
+    # نشيل حرف "و" (يعني "و") من أول الكلام لو حد كتبها ملزوقة زي "وغنيله"
+    if text.startswith("و") and len(text) > 3:
+        text = text[1:]
+    return text
+
+
 async def try_handle_game_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """لو المستخدم في نص لعبة (فزورة/مثل)، نتحقق من إجابته. بترجع True لو استهلكنا الرسالة."""
     awaiting = context.user_data.get("awaiting")
@@ -570,9 +590,9 @@ async def try_handle_game_answer(update: Update, context: ContextTypes.DEFAULT_T
         return False
 
     item = context.user_data.get("awaiting_data") or {}
-    user_text_norm = (update.message.text or "").strip().lower()
+    user_text_norm = normalize_arabic(update.message.text or "")
     keywords = item.get("answer_keywords", [])
-    is_correct = any(kw.lower() in user_text_norm for kw in keywords)
+    is_correct = any(normalize_arabic(kw) in user_text_norm or user_text_norm in normalize_arabic(kw) for kw in keywords)
 
     context.user_data["awaiting"] = None
     context.user_data["awaiting_data"] = None
@@ -672,6 +692,11 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
 # ================= الرسائل العادية =================
 
+def get_context_key(user_id: int, chat_id: int, is_group: bool) -> str:
+    """مفتاح منفصل للمحادثة الجماعية عشان ذاكرة الشات الخاص متتسربش للجروب."""
+    return f"group:{chat_id}:{user_id}" if is_group else str(user_id)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = update.effective_chat.type in ("group", "supergroup")
     is_private = update.effective_chat.type == "private"
@@ -696,7 +721,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     ensure_user(user_id, private_chat_id=update.effective_chat.id if is_private else None)
-    touch_last_active(user_id)
+    if is_private:
+        touch_last_active(user_id)
 
     user = get_user_profile(user_id)
     if is_private and user and not user["name"] and user["message_count"] == 0 and len(user_text.split()) <= 4:
@@ -708,17 +734,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if contains_crisis_keyword(user_text):
         await update.message.reply_text(CRISIS_MESSAGE)
 
-    save_message(user_id, "user", user_text)
-    history = get_recent_messages(user_id)
+    # مفتاح الذاكرة: خاص = ملف المستخدم الشخصي، جروب = سياق منفصل تمامًا معزول عن أي حاجة خاصة
+    context_key = get_context_key(user_id, update.effective_chat.id, is_group)
+    save_message(context_key, "user", user_text)
+    history = get_recent_messages(context_key)
+
+    if is_private:
+        system_prompt = build_personalized_system_prompt(user_id)
+    else:
+        system_prompt = BASE_SYSTEM_PROMPT + (
+            "\n\nملحوظة مهمة جدًا: إنت دلوقتي بترد جوه جروب فيه أكتر من شخص بيشوفوا الرد. "
+            "ممنوع تمامًا تكشف أو تلمّح لأي معلومة شخصية أو خاصة اتقالت لك في شات خاص (Private) مع أي حد، "
+            "حتى لو كانت معروفة عندك. تعامل مع كل حد في الجروب وكأنك بتكلمه لأول مرة، واستخدم بس اللي بيتقال دلوقتي في الجروب نفسه."
+        )
 
     try:
-        reply_text = call_gemini(build_personalized_system_prompt(user_id), history)
+        reply_text = call_gemini(system_prompt, history)
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}")
         reply_text = "معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏"
 
-    save_message(user_id, "assistant", reply_text)
-    maybe_update_profile(user_id)
+    save_message(context_key, "assistant", reply_text)
+    if is_private:
+        maybe_update_profile(user_id)
 
     await update.message.reply_text(reply_text)
 
