@@ -70,6 +70,7 @@ BASE_SYSTEM_PROMPT = """
 - تجنب الجمل الرسمية أو اللي شكلها "رد بوت" زي "أنا هنا لمساعدتك" أو "يسعدني أن أساعدك" - ده بيحس الناس إنهم بيكلموا آلة.
 - ماتكررش نفس الجمل الترحيبية أو التطمينية كل شوية، خليك متنوع زي أي حد بيتكلم عادي.
 - لو حد سألك صراحة "إنت بوت؟" أو "إنت AI؟" أو أي سؤال مباشر عن طبيعتك، قوله الحقيقة بصراحة ووضوح - إنك مساعد ذكاء اصطناعي - من غير ما تدّعي إنك إنسان حقيقي. الصدق هنا أهم من أي حاجة تانية. **بس ده بس لما يُسأل مباشرة** - متكررش التعريف بنفسك ("أنا أنيس، مساعد ذكاء اصطناعي...") في كل رسالة أو حتى في نفس الرسالة مرتين، ده بيحس المستخدم إنك بتقرا من سكريبت جاهز. رد بشكل طبيعي ومختلف كل مرة حسب سياق الكلام، من غير عبارات ثابتة بتتكرر.
+- خليك مرن وطبيعي في الدفء: لو حد قالك "بحبك" كرد فعل عادي وودّي، رد بشكل طبيعي (زي "وأنا كمان بحبك يا صاحبي" أو حاجة شبه كده) - ده جزء من كلام الناس العادي ومفيهوش أي حاجة غريبة. **بس** متبتديش إنت بألفاظ حب أو دلع رومانسي من نفسك (زي "يا حبيبي/حبيبتي" بمعنى عاطفي، "يا بطيطة"، "يا خلبوث")، ومتصعّدش الكلام لأسلوب غزل أو علاقة عاطفية حتى لو المستخدم حاول يجرك لكده - رد بخفة دم وودّ طبيعي، مش برومانسية.
 
 قواعد أساسية لازم تتبعها دايمًا:
 1. متشخصش أي حالة نفسية للمستخدم (زي اكتئاب، قلق، اضطراب...) حتى لو حسيت إنها كده. اوصف الشعور من غير ما تحط تسمية طبية.
@@ -412,12 +413,63 @@ def contains_flagged_word(text: str) -> bool:
     return any(normalize_arabic(w) in text_norm for w in FLAGGED_WORDS)
 
 
+# تتبع تكرار المخالفات في الذاكرة (بيتصفر لو البوت اتقفل، وده مقبول لأداة مكافحة سبام)
+FLAG_HISTORY = {}  # user_id -> [timestamps]
+LAST_ALERT_SENT = {}  # user_id -> timestamp آخر تنبيه اتبعت للأدمن
+AUTO_BAN_THRESHOLD = 5     # عدد المخالفات المتكررة قبل الحظر التلقائي
+AUTO_BAN_WINDOW_SECONDS = 600  # خلال كام ثانية (10 دقايق)
+ALERT_COOLDOWN_SECONDS = 20    # منمنعش تنبيهات متكررة لنفس الشخص أسرع من كده
+
+
+def register_flag_event(user_id: int) -> int:
+    """يسجل مخالفة جديدة ويرجع عدد المخالفات الحالية خلال النافذة الزمنية."""
+    now = datetime.now(timezone.utc).timestamp()
+    history = FLAG_HISTORY.setdefault(user_id, [])
+    history.append(now)
+    FLAG_HISTORY[user_id] = [t for t in history if now - t <= AUTO_BAN_WINDOW_SECONDS]
+    return len(FLAG_HISTORY[user_id])
+
+
+def should_send_alert(user_id: int) -> bool:
+    now = datetime.now(timezone.utc).timestamp()
+    last = LAST_ALERT_SENT.get(user_id, 0)
+    if now - last < ALERT_COOLDOWN_SECONDS:
+        return False
+    LAST_ALERT_SENT[user_id] = now
+    return True
+
+
 async def notify_admin_flagged_message(context: ContextTypes.DEFAULT_TYPE, update: Update):
     if ADMIN_USER_ID == 0:
         return
     sender = update.effective_user
     sender_name = sender.full_name or sender.username or str(sender.id)
     chat_label = "جروب" if update.effective_chat.type in ("group", "supergroup") else "شات خاص"
+
+    flag_count = register_flag_event(sender.id)
+
+    # لو تكرر المخالفة كتير خلال وقت قصير، نحظره أوتوماتيك من غير ما ننتظر الأدمن
+    if flag_count >= AUTO_BAN_THRESHOLD:
+        ban_user(sender.id)
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_USER_ID,
+                text=(
+                    f"🚫 اتحظر أوتوماتيك ({chat_label})\n"
+                    f"من: {sender_name} (آيدي: {sender.id})\n"
+                    f"كرر لفظ مخل {flag_count} مرات خلال دقايق قليلة.\n"
+                    f"آخر رسالة: \"{update.message.text}\"\n\n"
+                    f"لو حابب تفك الحظر: /unban {sender.id}"
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify admin about auto-ban: {e}")
+        return
+
+    # منمنعش تنبيهات متكررة جدًا لنفس الشخص (Rate limit)
+    if not should_send_alert(sender.id):
+        return
+
     keyboard = [[
         InlineKeyboardButton("🚫 حظر", callback_data=f"modban_{sender.id}"),
         InlineKeyboardButton("✅ تجاهل", callback_data=f"modignore_{sender.id}"),
@@ -427,8 +479,9 @@ async def notify_admin_flagged_message(context: ContextTypes.DEFAULT_TYPE, updat
             chat_id=ADMIN_USER_ID,
             text=(
                 f"⚠️ رسالة فيها لفظ مخل ({chat_label})\n"
-                f"من: {sender_name}\n"
-                f"قال: \"{update.message.text}\""
+                f"من: {sender_name} (آيدي: {sender.id})\n"
+                f"قال: \"{update.message.text}\"\n"
+                f"({flag_count} مخالفة خلال آخر 10 دقايق)"
             ),
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
@@ -443,11 +496,17 @@ async def moderation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     action, target_id_str = query.data.split("_", 1)
     target_id = int(target_id_str)
-    if action == "modban":
-        ban_user(target_id)
-        await query.edit_message_text(query.message.text + "\n\n🚫 تم الحظر.")
-    else:
-        await query.edit_message_text(query.message.text + "\n\n✅ اتجاهلت.")
+    try:
+        if action == "modban":
+            ban_user(target_id)
+            await query.edit_message_text(query.message.text + "\n\n🚫 تم الحظر.")
+        else:
+            await query.edit_message_text(query.message.text + "\n\n✅ اتجاهلت.")
+    except Exception as e:
+        logger.error(f"Moderation callback error: {e}")
+        # حتى لو فشل تعديل الرسالة (زي لو ضغطت الزرار مرتين)، الحظر يكون اتنفذ فعليًا
+        if action == "modban":
+            ban_user(target_id)
 
 
 def contains_crisis_keyword(text: str) -> bool:
@@ -491,25 +550,17 @@ def call_dahl_chat(system_prompt: str, history: list) -> str:
     return response.choices[0].message.content
 
 
-async def call_ai_race(system_prompt: str, history: list) -> str:
-    """بنبعت لـ Gemini و Dahl مع بعض، وناخد أول رد ينجح - أسرع وأضمن لو حد وقع أو اتأخر."""
-    if dahl_client is None:
-        return call_gemini(system_prompt, history)
+def clean_ai_response(text: str) -> str:
+    """شبكة أمان: نشيل أي أثر لتفكير داخلي (<think>...</think>) لو الموديل سرّبه بالغلط."""
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<thinking>.*?</thinking>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    return cleaned.strip()
 
-    tasks = {
-        asyncio.create_task(asyncio.to_thread(call_gemini, system_prompt, history)),
-        asyncio.create_task(asyncio.to_thread(call_dahl_chat, system_prompt, history)),
-    }
-    last_error = None
-    while tasks:
-        done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in done:
-            if task.exception() is None:
-                for pending_task in tasks:
-                    pending_task.cancel()
-                return task.result()
-            last_error = task.exception()
-    raise last_error or RuntimeError("كل مزودي الذكاء الاصطناعي فشلوا")
+
+async def call_ai_race(system_prompt: str, history: list) -> str:
+    """Dahl أظهر مشاكل في الرد على المحادثات (تسريب تفكير داخلي + أسلوب غير لائق)،
+    فرجّعنا الاعتماد على Gemini بس في المحادثة العادية للأمان والجودة."""
+    return call_gemini(system_prompt, history)
 
 
 def build_personalized_system_prompt(user_id: int) -> str:
@@ -1064,7 +1115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        reply_text = await call_ai_race(system_prompt, history)
+        reply_text = clean_ai_response(await call_ai_race(system_prompt, history))
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}")
         reply_text = "معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏"
