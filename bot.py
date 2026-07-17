@@ -1089,7 +1089,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — إحصائيات البوت\n"
         "/broadcast <رسالة> — بث رسالة لكل المستخدمين\n"
         "/togglecheckin — تشغيل/إيقاف رسالة الصباح اليومية\n"
-        "/togglereminder — تشغيل/إيقاف تذكير الغياب\n\n"
+        "/togglereminder — تشغيل/إيقاف تذكير الغياب\n"
+        "/banlist — عرض كل المحظورين\n"
+        "/unban <آيدي> — فك الحظر عن حد\n\n"
         f"حالة Check-in اليومي: {checkin_status}\n"
         f"حالة تذكير الغياب: {reminder_status}"
     )
@@ -1128,6 +1130,42 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Broadcast failed for {user['chat_id']}: {e}")
             failed += 1
     await update.message.reply_text(f"تم البث ✅\nوصلت لـ {sent} حد" + (f"، فشلت لـ {failed}" if failed else ""))
+
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "استخدمه كده: /unban <رقم الآيدي>\n"
+            "لو نسيت الآيدي، استخدم /banlist عشان تشوف كل المحظورين"
+        )
+        return
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("لازم تبعت رقم آيدي صحيح 🙏")
+        return
+    unban_user(target_id)
+    await update.message.reply_text(f"تمام ✅ اتفك الحظر عن {target_id}")
+
+
+async def banlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
+        return
+    conn = get_db()
+    rows = conn.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC").fetchall()
+    conn.close()
+    if not rows:
+        await update.message.reply_text("مفيش حد محظور دلوقتي 👍")
+        return
+    lines = ["🚫 المحظورين حاليًا:\n"]
+    for row in rows:
+        lines.append(f"- {row['user_id']}")
+    lines.append("\nلفك الحظر: /unban <الآيدي>")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def toggle_checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1169,6 +1207,8 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("banlist", banlist_command))
     app.add_handler(CommandHandler("togglecheckin", toggle_checkin_command))
     app.add_handler(CommandHandler("togglereminder", toggle_reminder_command))
     app.add_handler(CommandHandler("remind", remind_command))
