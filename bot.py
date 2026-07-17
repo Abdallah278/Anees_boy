@@ -558,9 +558,15 @@ def clean_ai_response(text: str) -> str:
 
 
 async def call_ai_race(system_prompt: str, history: list) -> str:
-    """Dahl أظهر مشاكل في الرد على المحادثات (تسريب تفكير داخلي + أسلوب غير لائق)،
-    فرجّعنا الاعتماد على Gemini بس في المحادثة العادية للأمان والجودة."""
-    return call_gemini(system_prompt, history)
+    """Gemini هو الأساسي دايمًا (أفضل جودة وأمان). لو فشل لأي سبب (زي تجاوز الحد المجاني اليومي)،
+    نلجأ لـ Dahl كخطة بديلة بدل ما نوقف الرد خالص."""
+    try:
+        return await asyncio.to_thread(call_gemini, system_prompt, history)
+    except Exception as e:
+        logger.error(f"Gemini failed, falling back to Dahl: {e}")
+        if dahl_client is None:
+            raise
+        return await asyncio.to_thread(call_dahl_chat, system_prompt, history)
 
 
 def build_personalized_system_prompt(user_id: int) -> str:
