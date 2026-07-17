@@ -22,7 +22,13 @@ from telegram.ext import (
 # ---------- الإعدادات ----------
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_API_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
+GEMINI_API_KEYS = [GEMINI_API_KEY] + [
+    k for k in [
+        os.environ.get("GEMINI_API_KEY_2", ""),
+        os.environ.get("GEMINI_API_KEY_3", ""),
+        os.environ.get("GEMINI_API_KEY_4", ""),
+    ] if k
+]
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
@@ -40,7 +46,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
 groq_client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL) if GROQ_API_KEY else None
-GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
+GEMINI_MODEL_NAME = "gemini-3.5-flash"  # موديل أقوى في التفكير والفهم، لسه في الحد المجاني
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -549,21 +555,24 @@ def _call_gemini_raw(system_prompt: str, history: list) -> str:
 
 
 def call_gemini(system_prompt: str, history: list) -> str:
-    """بيجرب المفتاح الأول، ولو خلص الكوتة (429) وفيه مفتاح تاني، يتحول له تلقائيًا."""
+    """بيلف على كل مفاتيح Gemini المتاحة بالترتيب، ولو مفتاح خلصت كوتته يتحول للي بعده تلقائيًا."""
     with _gemini_lock:
+        last_error = None
+        for i, key in enumerate(GEMINI_API_KEYS):
+            genai.configure(api_key=key)
+            try:
+                result = _call_gemini_raw(system_prompt, history)
+                genai.configure(api_key=GEMINI_API_KEY)  # نرجع المفتاح الافتراضي بعد النجاح
+                return result
+            except Exception as e:
+                last_error = e
+                is_quota_error = "429" in str(e) or "quota" in str(e).lower()
+                if not is_quota_error:
+                    genai.configure(api_key=GEMINI_API_KEY)
+                    raise
+                logger.info(f"Gemini key {i + 1} quota exceeded, trying next key")
         genai.configure(api_key=GEMINI_API_KEY)
-        try:
-            return _call_gemini_raw(system_prompt, history)
-        except Exception as e:
-            is_quota_error = "429" in str(e) or "quota" in str(e).lower()
-            if is_quota_error and GEMINI_API_KEY_2:
-                logger.info("Gemini key 1 quota exceeded, switching to key 2")
-                genai.configure(api_key=GEMINI_API_KEY_2)
-                try:
-                    return _call_gemini_raw(system_prompt, history)
-                finally:
-                    genai.configure(api_key=GEMINI_API_KEY)  # نرجع المفتاح الافتراضي
-            raise
+        raise last_error
 
 
 def call_dahl_chat(system_prompt: str, history: list) -> str:
