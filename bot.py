@@ -24,15 +24,15 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
-genai.configure(api_key=GEMINI_API_KEY)
-
-dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
-GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
-
 # Dahl Inference (اختياري) - بنستخدمه بس لفهم الوقت في التذكير بشكل أذكى من Regex
 DAHL_API_KEY = os.environ.get("DAHL_API_KEY", "")
 DAHL_BASE_URL = "https://inference.dahl.global/v1"
 DAHL_MODEL_NAME = "MiniMaxAI/MiniMax-M2.7"
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
+GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
