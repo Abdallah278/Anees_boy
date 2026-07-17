@@ -2,6 +2,7 @@ import os
 import re
 import random
 import asyncio
+import threading
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta, time as dtime
@@ -21,6 +22,7 @@ from telegram.ext import (
 # ---------- الإعدادات ----------
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GEMINI_API_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
@@ -74,6 +76,7 @@ BASE_SYSTEM_PROMPT = """
 أسلوب الكلام:
 - اتكلم عامية مصرية حقيقية زي كلام الناس بالظبط، مش عربي فصحى ومش عامية متكلفة. استخدم كلمات زي "طب"، "يعني"، "بجد"، "معلش" في مكانها الطبيعي.
 - تجنب الجمل الرسمية أو اللي شكلها "رد بوت" زي "أنا هنا لمساعدتك" أو "يسعدني أن أساعدك" - ده بيحس الناس إنهم بيكلموا آلة.
+- **ممنوع نهائيًا** ألفاظ رسمية أو خدماتية بتتنافر مع العامية زي "يا فندم"، "حضرتك"، "تحت أمرك"، "تفضل"، "نتشرف بخدمتك" - دي كلام مكاتب وخدمة عملاء، مش كلام صاحب. استخدم بدالها أسلوب صاحبك القريب زي "يا صاحبي"، "يا نجم"، أو حتى بدون أي لقب خالص.
 - ماتكررش نفس الجمل الترحيبية أو التطمينية كل شوية، خليك متنوع زي أي حد بيتكلم عادي.
 - لو حد سألك صراحة "إنت بوت؟" أو "إنت AI؟" أو أي سؤال مباشر عن طبيعتك، قوله الحقيقة بصراحة ووضوح - إنك مساعد ذكاء اصطناعي - من غير ما تدّعي إنك إنسان حقيقي. الصدق هنا أهم من أي حاجة تانية. **بس ده بس لما يُسأل مباشرة** - متكررش التعريف بنفسك ("أنا أنيس، مساعد ذكاء اصطناعي...") في كل رسالة أو حتى في نفس الرسالة مرتين، ده بيحس المستخدم إنك بتقرا من سكريبت جاهز. رد بشكل طبيعي ومختلف كل مرة حسب سياق الكلام، من غير عبارات ثابتة بتتكرر.
 - خليك مرن وطبيعي في الدفء: لو حد قالك "بحبك" كرد فعل عادي وودّي، رد بشكل طبيعي (زي "وأنا كمان بحبك يا صاحبي" أو حاجة شبه كده) - ده جزء من كلام الناس العادي ومفيهوش أي حاجة غريبة. **بس** متبتديش إنت بألفاظ حب أو دلع رومانسي من نفسك (زي "يا حبيبي/حبيبتي" بمعنى عاطفي، "يا بطيطة"، "يا خلبوث")، ومتصعّدش الكلام لأسلوب غزل أو علاقة عاطفية حتى لو المستخدم حاول يجرك لكده - رد بخفة دم وودّ طبيعي، مش برومانسية.
@@ -530,7 +533,10 @@ def message_mentions_bot(text: str) -> bool:
 
 # ================= Gemini =================
 
-def call_gemini(system_prompt: str, history: list) -> str:
+_gemini_lock = threading.Lock()
+
+
+def _call_gemini_raw(system_prompt: str, history: list) -> str:
     model = genai.GenerativeModel(model_name=GEMINI_MODEL_NAME, system_instruction=system_prompt)
     gemini_history = []
     for m in history[:-1]:
@@ -540,6 +546,24 @@ def call_gemini(system_prompt: str, history: list) -> str:
     last_message = history[-1]["content"]
     response = chat.send_message(last_message)
     return response.text
+
+
+def call_gemini(system_prompt: str, history: list) -> str:
+    """بيجرب المفتاح الأول، ولو خلص الكوتة (429) وفيه مفتاح تاني، يتحول له تلقائيًا."""
+    with _gemini_lock:
+        genai.configure(api_key=GEMINI_API_KEY)
+        try:
+            return _call_gemini_raw(system_prompt, history)
+        except Exception as e:
+            is_quota_error = "429" in str(e) or "quota" in str(e).lower()
+            if is_quota_error and GEMINI_API_KEY_2:
+                logger.info("Gemini key 1 quota exceeded, switching to key 2")
+                genai.configure(api_key=GEMINI_API_KEY_2)
+                try:
+                    return _call_gemini_raw(system_prompt, history)
+                finally:
+                    genai.configure(api_key=GEMINI_API_KEY)  # نرجع المفتاح الافتراضي
+            raise
 
 
 def call_dahl_chat(system_prompt: str, history: list) -> str:
