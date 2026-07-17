@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==21.4
 google-generativeai==0.8.3
 matplotlib==3.9.2
 tzdata
+openai>=1.0.0

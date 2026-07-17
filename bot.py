@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import google.generativeai as genai
+from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, MessageHandler,
@@ -24,7 +25,14 @@ DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
 genai.configure(api_key=GEMINI_API_KEY)
+
+dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
 GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
+
+# Dahl Inference (اختياري) - بنستخدمه بس لفهم الوقت في التذكير بشكل أذكى من Regex
+DAHL_API_KEY = os.environ.get("DAHL_API_KEY", "")
+DAHL_BASE_URL = "https://inference.dahl.global/v1"
+DAHL_MODEL_NAME = "MiniMaxAI/MiniMax-M2.7"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -469,6 +477,41 @@ def call_gemini(system_prompt: str, history: list) -> str:
     return response.text
 
 
+def call_dahl_chat(system_prompt: str, history: list) -> str:
+    if dahl_client is None:
+        raise RuntimeError("Dahl مش متظبط (مفيش DAHL_API_KEY)")
+    messages = [{"role": "system", "content": system_prompt}]
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"]})
+    response = dahl_client.chat.completions.create(
+        model=DAHL_MODEL_NAME,
+        messages=messages,
+        max_tokens=500,
+    )
+    return response.choices[0].message.content
+
+
+async def call_ai_race(system_prompt: str, history: list) -> str:
+    """بنبعت لـ Gemini و Dahl مع بعض، وناخد أول رد ينجح - أسرع وأضمن لو حد وقع أو اتأخر."""
+    if dahl_client is None:
+        return call_gemini(system_prompt, history)
+
+    tasks = {
+        asyncio.create_task(asyncio.to_thread(call_gemini, system_prompt, history)),
+        asyncio.create_task(asyncio.to_thread(call_dahl_chat, system_prompt, history)),
+    }
+    last_error = None
+    while tasks:
+        done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if task.exception() is None:
+                for pending_task in tasks:
+                    pending_task.cancel()
+                return task.result()
+            last_error = task.exception()
+    raise last_error or RuntimeError("كل مزودي الذكاء الاصطناعي فشلوا")
+
+
 def build_personalized_system_prompt(user_id: int) -> str:
     user = get_user_profile(user_id)
     extra = ""
@@ -626,6 +669,35 @@ UNIT_TO_SECONDS = {
 }
 
 
+def parse_time_with_dahl(text: str) -> int | None:
+    """لو الـ Regex العادي فشل، نستخدم Dahl (موديل ذكاء اصطناعي) يفهم الوقت من كلام طبيعي."""
+    if dahl_client is None:
+        return None
+    try:
+        response = dahl_client.chat.completions.create(
+            model=DAHL_MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "المستخدم بيكتب بالعامية المصرية إمتى عايز تذكير. "
+                        "رد بالثواني بس (رقم صحيح)، من غير أي كلام تاني. "
+                        "مثال: 'بكرة الصبح' يعني حوالي 43200 ثانية (12 ساعة). "
+                        "لو مش فاهم الوقت خالص، رد بـ 0."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            max_tokens=20,
+        )
+        raw = response.choices[0].message.content.strip()
+        seconds = int(re.sub(r"[^\d]", "", raw) or 0)
+        return seconds if seconds > 0 else None
+    except Exception as e:
+        logger.error(f"Dahl time parsing error: {e}")
+        return None
+
+
 async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"⏰ فاكرك: {job.data['message']}")
@@ -651,15 +723,21 @@ async def try_handle_reminder_flow(update: Update, context: ContextTypes.DEFAULT
 
     if state == "awaiting_time":
         match = REMINDER_TIME_PATTERN.search(text)
-        if not match:
-            await update.message.reply_text(
-                "معلش مفهمتش الوقت 🙏 اكتبه زي كده: \"بعد 10 دقايق\" أو \"بعد 3 ساعات\" أو \"بعد يوم\""
-            )
-            return True
+        if match:
+            amount = int(match.group(1))
+            unit = match.group(2)
+            seconds = amount * UNIT_TO_SECONDS[unit]
+            time_desc = f"{amount} {unit}"
+        else:
+            # الـ Regex العادي فشل، نجرب Dahl يفهم الصيغة الطبيعية (زي "بكرة الصبح")
+            seconds = parse_time_with_dahl(text)
+            if seconds is None:
+                await update.message.reply_text(
+                    "معلش مفهمتش الوقت 🙏 اكتبه زي كده: \"بعد 10 دقايق\" أو \"بعد 3 ساعات\" أو \"بعد يوم\""
+                )
+                return True
+            time_desc = text
 
-        amount = int(match.group(1))
-        unit = match.group(2)
-        seconds = amount * UNIT_TO_SECONDS[unit]
         message = context.user_data.get("remind_message", "")
 
         context.job_queue.run_once(
@@ -670,7 +748,7 @@ async def try_handle_reminder_flow(update: Update, context: ContextTypes.DEFAULT
 
         context.user_data["remind_state"] = None
         context.user_data["remind_message"] = None
-        await update.message.reply_text(f"تمام ✅ هفكرك بـ \"{message}\" بعد {amount} {unit}")
+        await update.message.reply_text(f"تمام ✅ هفكرك بـ \"{message}\" ({time_desc})")
         return True
 
     return False
@@ -986,7 +1064,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        reply_text = call_gemini(system_prompt, history)
+        reply_text = await call_ai_race(system_prompt, history)
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}")
         reply_text = "معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏"
