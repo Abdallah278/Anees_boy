@@ -46,7 +46,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
 groq_client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL) if GROQ_API_KEY else None
-GEMINI_MODEL_NAME = "gemini-3.5-flash"  # موديل أقوى في التفكير والفهم، لسه في الحد المجاني
+GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"  # الأسرع، رجعناله عشان البطء
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -555,24 +555,27 @@ def _call_gemini_raw(system_prompt: str, history: list) -> str:
 
 
 def call_gemini(system_prompt: str, history: list) -> str:
-    """بيلف على كل مفاتيح Gemini المتاحة بالترتيب، ولو مفتاح خلصت كوتته يتحول للي بعده تلقائيًا."""
-    with _gemini_lock:
-        last_error = None
-        for i, key in enumerate(GEMINI_API_KEYS):
+    """بيلف على كل مفاتيح Gemini المتاحة، من غير ما يقفل الطلبات ورا بعض (عشان السرعة مع أكتر من مستخدم)."""
+    last_error = None
+    for i, key in enumerate(GEMINI_API_KEYS):
+        with _gemini_lock:
             genai.configure(api_key=key)
-            try:
-                result = _call_gemini_raw(system_prompt, history)
-                genai.configure(api_key=GEMINI_API_KEY)  # نرجع المفتاح الافتراضي بعد النجاح
-                return result
-            except Exception as e:
-                last_error = e
-                is_quota_error = "429" in str(e) or "quota" in str(e).lower()
-                if not is_quota_error:
+        try:
+            result = _call_gemini_raw(system_prompt, history)
+            with _gemini_lock:
+                genai.configure(api_key=GEMINI_API_KEY)
+            return result
+        except Exception as e:
+            last_error = e
+            is_quota_error = "429" in str(e) or "quota" in str(e).lower()
+            if not is_quota_error:
+                with _gemini_lock:
                     genai.configure(api_key=GEMINI_API_KEY)
-                    raise
-                logger.info(f"Gemini key {i + 1} quota exceeded, trying next key")
+                raise
+            logger.info(f"Gemini key {i + 1} quota exceeded, trying next key")
+    with _gemini_lock:
         genai.configure(api_key=GEMINI_API_KEY)
-        raise last_error
+    raise last_error
 
 
 def call_dahl_chat(system_prompt: str, history: list) -> str:
