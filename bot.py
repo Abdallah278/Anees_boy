@@ -276,7 +276,8 @@ def save_message(user_id, role: str, content: str):
         "INSERT INTO messages (chat_id, role, content, timestamp) VALUES (%s, %s, %s, %s)",
         (str(user_id), role, content, datetime.now(timezone.utc).isoformat()),
     )
-    if role == "user":
+    # عداد الرسايل بتاع الملف الشخصي بيتحدث بس لو ده مستخدم حقيقي (شات خاص)، مش مفتاح جروب مركّب
+    if role == "user" and not str(user_id).startswith("group:"):
         cur.execute(
             "UPDATE users SET message_count = message_count + 1 WHERE chat_id = %s",
             (user_id,),
@@ -1156,14 +1157,21 @@ def get_context_key(user_id: int, chat_id: int, is_group: bool) -> str:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await _handle_message_inner(update, context)
+    except Exception as e:
+        logger.error(f"Unhandled error in handle_message: {e}")
+        try:
+            await update.message.reply_text("معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏")
+        except Exception:
+            pass
+
+
+async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = update.effective_chat.type in ("group", "supergroup")
     is_private = update.effective_chat.type == "private"
     user_text = update.message.text or ""
     user_id = update.effective_user.id
-
-    # مستخدم محظور: نتجاهله تمامًا
-    if is_user_banned(user_id):
-        return
 
     if is_group:
         replied_to_bot = (
@@ -1173,6 +1181,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not (message_mentions_bot(user_text) or replied_to_bot):
             return
+
+    # مستخدم محظور: نتجاهله تمامًا
+    if is_user_banned(user_id):
+        return
 
     # أوامر الأدمن بالعربي (بس لو المستخدم أدمن فعلاً)
     if is_admin(user_id):
