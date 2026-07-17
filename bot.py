@@ -24,14 +24,20 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
-# Dahl Inference (اختياري) - بنستخدمه بس لفهم الوقت في التذكير بشكل أذكى من Regex
+# Dahl Inference (اختياري) - احتياطي أخير + بيساعد في فهم الوقت في التذكير
 DAHL_API_KEY = os.environ.get("DAHL_API_KEY", "")
 DAHL_BASE_URL = "https://inference.dahl.global/v1"
 DAHL_MODEL_NAME = "MiniMaxAI/MiniMax-M2.7"
 
+# Groq (اختياري) - احتياطي أول لو Gemini خلصت الكوتة بتاعته، شركة موثوقة وسريعة جدًا
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODEL_NAME = "openai/gpt-oss-120b"
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
+groq_client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL) if GROQ_API_KEY else None
 GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"
 
 logging.basicConfig(level=logging.INFO)
@@ -550,6 +556,20 @@ def call_dahl_chat(system_prompt: str, history: list) -> str:
     return response.choices[0].message.content
 
 
+def call_groq_chat(system_prompt: str, history: list) -> str:
+    if groq_client is None:
+        raise RuntimeError("Groq مش متظبط (مفيش GROQ_API_KEY)")
+    messages = [{"role": "system", "content": system_prompt}]
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"]})
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL_NAME,
+        messages=messages,
+        max_tokens=500,
+    )
+    return response.choices[0].message.content
+
+
 def clean_ai_response(text: str) -> str:
     """شبكة أمان: نشيل أي أثر لتفكير داخلي (<think>...</think>) لو الموديل سرّبه بالغلط."""
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -558,15 +578,23 @@ def clean_ai_response(text: str) -> str:
 
 
 async def call_ai_race(system_prompt: str, history: list) -> str:
-    """Gemini هو الأساسي دايمًا (أفضل جودة وأمان). لو فشل لأي سبب (زي تجاوز الحد المجاني اليومي)،
-    نلجأ لـ Dahl كخطة بديلة بدل ما نوقف الرد خالص."""
+    """Gemini هو الأساسي دايمًا (أفضل جودة وأمان). لو فشل (زي تجاوز الحد اليومي)،
+    نجرب Groq (موثوق وسريع)، ولو فشل هو كمان، آخر حل Dahl."""
     try:
         return await asyncio.to_thread(call_gemini, system_prompt, history)
     except Exception as e:
-        logger.error(f"Gemini failed, falling back to Dahl: {e}")
-        if dahl_client is None:
-            raise
+        logger.error(f"Gemini failed: {e}")
+
+    if groq_client is not None:
+        try:
+            return await asyncio.to_thread(call_groq_chat, system_prompt, history)
+        except Exception as e:
+            logger.error(f"Groq failed: {e}")
+
+    if dahl_client is not None:
         return await asyncio.to_thread(call_dahl_chat, system_prompt, history)
+
+    raise RuntimeError("كل مزودي الذكاء الاصطناعي فشلوا")
 
 
 def build_personalized_system_prompt(user_id: int) -> str:
