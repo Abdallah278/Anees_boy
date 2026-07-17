@@ -3,7 +3,8 @@ import re
 import random
 import asyncio
 import threading
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import logging
 from datetime import datetime, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
@@ -29,7 +30,7 @@ GEMINI_API_KEYS = [GEMINI_API_KEY] + [
         os.environ.get("GEMINI_API_KEY_4", ""),
     ] if k
 ]
-DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
+DATABASE_URL = os.environ["DATABASE_URL"]
 CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
 # Dahl Inference (اختياري) - احتياطي أخير + بيساعد في فهم الوقت في التذكير
@@ -185,110 +186,115 @@ BASE_SYSTEM_PROMPT_EXTRA_GAMES_HINT = (
 BASE_SYSTEM_PROMPT += BASE_SYSTEM_PROMPT_EXTRA_GAMES_HINT
 
 
-# ================= قاعدة البيانات =================
+# ================= قاعدة البيانات (Postgres) =================
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
-
-
-def _add_column_if_missing(conn, table, column, coltype):
-    cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-    if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
 
 
 def init_db():
     conn = get_db()
-    conn.executescript("""
+    cur = conn.cursor()
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        chat_id INTEGER PRIMARY KEY,
+        chat_id BIGINT PRIMARY KEY,
         name TEXT,
         profile_summary TEXT DEFAULT '',
         message_count INTEGER DEFAULT 0,
         created_at TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        chat_id TEXT,
         role TEXT,
         content TEXT,
         timestamp TEXT
     );
     CREATE TABLE IF NOT EXISTS moods (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        chat_id TEXT,
         score INTEGER,
         timestamp TEXT
     );
     """)
     # أعمدة إضافية لميزات التفاعل التلقائي (check-in / تذكير / ملخص أسبوعي)
-    _add_column_if_missing(conn, "users", "private_chat_id", "INTEGER")
-    _add_column_if_missing(conn, "users", "last_active_at", "TEXT")
-    _add_column_if_missing(conn, "users", "last_reminder_at", "TEXT")
-    conn.execute("""
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS private_chat_id BIGINT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TEXT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder_at TEXT")
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
     """)
-    conn.execute("""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS banned_users (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         banned_at TEXT
     )
     """)
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def ensure_user(user_id: int, private_chat_id: int = None):
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE chat_id = ?", (user_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE chat_id = %s", (user_id,))
+    row = cur.fetchone()
     if row is None:
-        conn.execute(
+        cur.execute(
             "INSERT INTO users (chat_id, name, profile_summary, message_count, created_at, private_chat_id, last_active_at) "
-            "VALUES (?, '', '', 0, ?, ?, ?)",
+            "VALUES (%s, '', '', 0, %s, %s, %s)",
             (user_id, datetime.now(timezone.utc).isoformat(), private_chat_id, datetime.now(timezone.utc).isoformat()),
         )
     elif private_chat_id is not None:
-        conn.execute("UPDATE users SET private_chat_id = ? WHERE chat_id = ?", (private_chat_id, user_id))
+        cur.execute("UPDATE users SET private_chat_id = %s WHERE chat_id = %s", (private_chat_id, user_id))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def touch_last_active(user_id: int):
     conn = get_db()
-    conn.execute(
-        "UPDATE users SET last_active_at = ? WHERE chat_id = ?",
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET last_active_at = %s WHERE chat_id = %s",
         (datetime.now(timezone.utc).isoformat(), user_id),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
-def save_message(user_id: int, role: str, content: str):
+def save_message(user_id, role: str, content: str):
     conn = get_db()
-    conn.execute(
-        "INSERT INTO messages (chat_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-        (user_id, role, content, datetime.now(timezone.utc).isoformat()),
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO messages (chat_id, role, content, timestamp) VALUES (%s, %s, %s, %s)",
+        (str(user_id), role, content, datetime.now(timezone.utc).isoformat()),
     )
     if role == "user":
-        conn.execute(
-            "UPDATE users SET message_count = message_count + 1 WHERE chat_id = ?",
+        cur.execute(
+            "UPDATE users SET message_count = message_count + 1 WHERE chat_id = %s",
             (user_id,),
         )
     conn.commit()
+    cur.close()
     conn.close()
 
 
-def get_recent_messages(user_id: int, limit: int = MAX_HISTORY_MESSAGES):
+def get_recent_messages(user_id, limit: int = MAX_HISTORY_MESSAGES):
     conn = get_db()
-    rows = conn.execute(
-        "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
-        (user_id, limit),
-    ).fetchall()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT role, content FROM messages WHERE chat_id = %s ORDER BY id DESC LIMIT %s",
+        (str(user_id), limit),
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     rows = list(reversed(rows))
     return [{"role": r["role"], "content": r["content"]} for r in rows]
@@ -296,41 +302,53 @@ def get_recent_messages(user_id: int, limit: int = MAX_HISTORY_MESSAGES):
 
 def get_user_profile(user_id: int):
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE chat_id = ?", (user_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE chat_id = %s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row
 
 
 def update_user_profile(user_id: int, profile_summary: str):
     conn = get_db()
-    conn.execute("UPDATE users SET profile_summary = ? WHERE chat_id = ?", (profile_summary, user_id))
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET profile_summary = %s WHERE chat_id = %s", (profile_summary, user_id))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def set_user_name(user_id: int, name: str):
     conn = get_db()
-    conn.execute("UPDATE users SET name = ? WHERE chat_id = ?", (name, user_id))
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET name = %s WHERE chat_id = %s", (name, user_id))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def save_mood(user_id: int, score: int):
     conn = get_db()
-    conn.execute(
-        "INSERT INTO moods (chat_id, score, timestamp) VALUES (?, ?, ?)",
-        (user_id, score, datetime.now(timezone.utc).isoformat()),
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO moods (chat_id, score, timestamp) VALUES (%s, %s, %s)",
+        (str(user_id), score, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_moods(user_id: int, limit: int = 30):
     conn = get_db()
-    rows = conn.execute(
-        "SELECT score, timestamp FROM moods WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
-        (user_id, limit),
-    ).fetchall()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT score, timestamp FROM moods WHERE chat_id = %s ORDER BY id DESC LIMIT %s",
+        (str(user_id), limit),
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return list(reversed(rows))
 
@@ -338,55 +356,77 @@ def get_moods(user_id: int, limit: int = 30):
 def get_all_private_users():
     """كل المستخدمين اللي بدأوا شات خاص مع البوت (عشان نبعتلهم رسائل تلقائية)."""
     conn = get_db()
-    rows = conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         "SELECT chat_id, name, private_chat_id, last_active_at, last_reminder_at FROM users WHERE private_chat_id IS NOT NULL"
-    ).fetchall()
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return rows
 
 
 def mark_reminder_sent(user_id: int):
     conn = get_db()
-    conn.execute(
-        "UPDATE users SET last_reminder_at = ? WHERE chat_id = ?",
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET last_reminder_at = %s WHERE chat_id = %s",
         (datetime.now(timezone.utc).isoformat(), user_id),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_setting(key: str, default: str = "on") -> str:
     conn = get_db()
-    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row["value"] if row else default
 
 
 def set_setting(key: str, value: str):
     conn = get_db()
-    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", (key, value, value))
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        (key, value),
+    )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_total_users_count() -> int:
     conn = get_db()
-    row = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as c FROM users")
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row["c"]
 
 
 def get_total_messages_count() -> int:
     conn = get_db()
-    row = conn.execute("SELECT COUNT(*) as c FROM messages").fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as c FROM messages")
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row["c"]
 
 
 def get_active_today_count() -> int:
     conn = get_db()
+    cur = conn.cursor()
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    row = conn.execute("SELECT COUNT(*) as c FROM users WHERE last_active_at >= ?", (today_start,)).fetchone()
+    cur.execute("SELECT COUNT(*) as c FROM users WHERE last_active_at >= %s", (today_start,))
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row["c"]
 
@@ -397,24 +437,31 @@ def is_admin(user_id: int) -> bool:
 
 def ban_user(user_id: int):
     conn = get_db()
-    conn.execute(
-        "INSERT INTO banned_users (user_id, banned_at) VALUES (?, ?) ON CONFLICT(user_id) DO NOTHING",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO banned_users (user_id, banned_at) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
         (user_id, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def unban_user(user_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM banned_users WHERE user_id = %s", (user_id,))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def is_user_banned(user_id: int) -> bool:
     conn = get_db()
-    row = conn.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM banned_users WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    cur.close()
     conn.close()
     return row is not None
 
@@ -1277,7 +1324,10 @@ async def banlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الأمر ده متاح للأدمن بس 🙏")
         return
     conn = get_db()
-    rows = conn.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     if not rows:
         await update.message.reply_text("مفيش حد محظور دلوقتي 👍")
