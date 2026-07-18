@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import google.generativeai as genai
-from gtts import gTTS
+import edge_tts
 from openai import OpenAI
 import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -684,12 +684,15 @@ def clean_ai_response(text: str) -> str:
 
 VOICE_REPLY_CHANCE = 0.25  # نسبة تحويل الرد لرسالة صوتية (خاص بس، مش جروبات)
 VOICE_MAX_CHARS = 300      # مانبعتش صوت لو الرد طويل جدًا (وقت تحويل أطول)
+EDGE_TTS_VOICE = "ar-EG-SalmaNeural"  # صوت مصري طبيعي (مش MSA رسمي زي gTTS)
 
 
-def generate_voice_bytes(text: str) -> io.BytesIO:
+async def generate_voice_bytes(text: str) -> io.BytesIO:
+    communicate = edge_tts.Communicate(text, EDGE_TTS_VOICE)
     buf = io.BytesIO()
-    tts = gTTS(text=text, lang="ar")
-    tts.write_to_fp(buf)
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            buf.write(chunk["data"])
     buf.seek(0)
     buf.name = "anees_voice.mp3"
     return buf
@@ -1039,9 +1042,7 @@ async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def voice_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        voice_buf = await asyncio.to_thread(
-            generate_voice_bytes, "أهلاً، أنا أنيس، وده اختبار للرسالة الصوتية."
-        )
+        voice_buf = await generate_voice_bytes("أهلاً، أنا أنيس، وده اختبار للرسالة الصوتية.")
         await update.message.reply_audio(audio=voice_buf, title="أنيس")
     except Exception as e:
         logger.error(f"Voice test failed: {e}")
@@ -1310,7 +1311,7 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     )
     if send_as_voice:
         try:
-            voice_buf = await asyncio.to_thread(generate_voice_bytes, reply_text)
+            voice_buf = await generate_voice_bytes(reply_text)
             await update.message.reply_audio(audio=voice_buf, title="أنيس")
             return
         except Exception as e:
