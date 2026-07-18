@@ -104,7 +104,11 @@ BASE_SYSTEM_PROMPT = """
 4. لو المستخدم بيسأل عن حاجة تقنية زي جرعات أدوية أو طرق إيذاء نفس، امنعها ووجهه لطبيب/مختص.
 5. ذكّره بلطف بين فترة وفترة إن الكلام مع معالج نفسي حقيقي مهم لو استمرت الحالة.
 6. خليك مختصر ودافئ، مش محاضرات طويلة. جملتين تلاتة كل مرة عادةً، واسأل سؤال واحد بس لو محتاج توضيح.
-7. لو حد سألك حاجة برا نطاق الدعم النفسي والمشاعر (زي أسئلة عامة، واجبات مدرسية، برمجة، أخبار، وصفات طعام، إلخ)، اعتذر بلطف وقول إن دورك محصور في الاستماع والدعم النفسي بس، وارجع بلطف تسأله عن حاله أو عن اللي في بالكم. متجاوبش على السؤال الخارجي حتى لو كان بسيط.
+7. **قاعدة صارمة ومفيهاش استثناء:** لو حد طلب حاجة برا نطاق الدعم النفسي والمشاعر - زي أسئلة عامة، واجبات مدرسية، برمجة، أخبار، وصفات طعام، **ترشيح أغاني أو أفلام أو مسلسلات**، أو أي طلب محتوى ترفيهي - اعتذر بلطف في جملة أو اتنين بس، وارجع على طول تسأله عن حاله. **ممنوع تمامًا** إنك تفصّل أو تقترح أو تدّي قائمة أو تتفاعل مع الطلب بأي شكل حتى لو "بس عشان تجاوبه بسرعة" أو "حاجة بسيطة". لو حسيت إنك بتكتب قائمة أو أسماء أغاني/أفلام/منتجات، وقف فورًا - ده معناه إنك خرجت عن دورك.
+
+مثال:
+المستخدم: "هات اغاني هاني شاكر واليسا"
+ردك: "الموضوع ده مش تخصصي للأسف 😅 أنا هنا بس عشان أسمعك وأدعمك نفسيًا. عامل إيه النهاردة؟"
 8. لو جالك في "ملف المستخدم" أسماء أشخاص أو مواقف اتكلم عنها المستخدم قبل كده (زي مشكلة مع صاحبه أو موقف معين)، واتكلم دلوقتي عن حاجة ممكن تكون مرتبطة بيها، اربط بينهم بشكل طبيعي في ردك (زي "لسه في نفس الموضوع بتاع صاحبك؟") بدل ما تتعامل مع كل رسالة كأنها منفصلة. الهدف إنك تحس المستخدم إنك فاكر السياق، مش بس بتسمع الرسالة الحالية لوحدها.
 9. **قاعدة أساسية مش اختيارية:** لو الشخص عبّر عن ضيق نفسي واضح - استخدم كلمات زي "مخنوق"، "زهقان"، "تعبان نفسيًا"، "ضايع"، "مش قادر أستحمل"، "قلقان"، "خايف" - لازم ردك يتضمن آية قرآنية أو حديث شريف مناسب للموقف، مكتوب بدقة، كجزء طبيعي من الرد مش إضافة منفصلة. اربطها بكلامك العادي وواصل تسمع وتتعاطف بعدها. الأمثلة تحت توضح الأسلوب بالظبط. **مهم جدًا:** الآية أو الحديث إضافة لكلامك الدافئ مش بديل عنه، وممنوع تستخدمه عشان "تقفل" كلام الشخص أو تقلل من حجم اللي بيحس بيه (زي إنك تقوله "بس ادعو ربنا وخلاص") - ده بيحس الشخص إنك مش فاهمه. في المواضيع اللي مفيهاش ضيق واضح (زي أسئلة عامة أو كلام عادي)، متقحمش آيات بالعافية.
 
@@ -272,6 +276,14 @@ def init_db():
         content TEXT,
         deliver_at TEXT,
         delivered BOOLEAN DEFAULT FALSE
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS group_members (
+        group_chat_id TEXT,
+        user_id BIGINT,
+        display_name TEXT,
+        PRIMARY KEY (group_chat_id, user_id)
     )
     """)
     conn.commit()
@@ -614,6 +626,41 @@ def mark_future_message_delivered(msg_id: int):
     conn.commit()
     cur.close()
     conn.close()
+
+
+def upsert_group_member(group_chat_id: int, user_id: int, display_name: str):
+    """بيسجل اسم الشخص في الجروب ده بس - من غير أي تفاصيل شخصية أو محادثات."""
+    if not display_name:
+        return
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO group_members (group_chat_id, user_id, display_name) VALUES (%s, %s, %s) "
+        "ON CONFLICT (group_chat_id, user_id) DO UPDATE SET display_name = EXCLUDED.display_name",
+        (str(group_chat_id), user_id, display_name),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_group_member_names(group_chat_id: int, exclude_user_id: int = None, limit: int = 50):
+    conn = get_db()
+    cur = conn.cursor()
+    if exclude_user_id is not None:
+        cur.execute(
+            "SELECT display_name FROM group_members WHERE group_chat_id = %s AND user_id != %s LIMIT %s",
+            (str(group_chat_id), exclude_user_id, limit),
+        )
+    else:
+        cur.execute(
+            "SELECT display_name FROM group_members WHERE group_chat_id = %s LIMIT %s",
+            (str(group_chat_id), limit),
+        )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [r["display_name"] for r in rows]
 
 
 
@@ -1678,10 +1725,25 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     if is_private:
         system_prompt = build_personalized_system_prompt(user_id)
     else:
+        # اسم المتكلم الحالي (بياناته هو بس، مش معلومات حد تاني)
+        speaker_profile = get_user_profile(user_id)
+        speaker_name = (
+            speaker_profile["name"] if speaker_profile and speaker_profile["name"]
+            else (update.effective_user.first_name or "")
+        )
+        upsert_group_member(update.effective_chat.id, user_id, speaker_name)
+
+        known_names = get_group_member_names(update.effective_chat.id, exclude_user_id=user_id)
+        names_line = f"\nأعضاء تانيين معروفين في الجروب ده: {', '.join(known_names)}." if known_names else ""
+
         system_prompt = BASE_SYSTEM_PROMPT + (
             "\n\nملحوظة مهمة جدًا: إنت دلوقتي بترد جوه جروب فيه أكتر من شخص بيشوفوا الرد. "
             "ممنوع تمامًا تكشف أو تلمّح لأي معلومة شخصية أو خاصة اتقالت لك في شات خاص (Private) مع أي حد، "
-            "حتى لو كانت معروفة عندك. تعامل مع كل حد في الجروب وكأنك بتكلمه لأول مرة، واستخدم بس اللي بيتقال دلوقتي في الجروب نفسه."
+            "حتى لو كانت معروفة عندك. استخدم بس اللي بيتقال دلوقتي في الجروب نفسه لمحتوى الكلام.\n"
+            f"اسم اللي بيكلمك دلوقتي: {speaker_name or 'مش معروف'}."
+            f"{names_line}\n"
+            "الأسامي دي بس للتعرف الاجتماعي (إنك تعرف إن الاسم ده عضو حقيقي في الجروب وتتعامل معاه طبيعي لو اتذكر)، "
+            "**ممنوع تمامًا** تختلق أو تفترض أي تفاصيل شخصية عن أي عضو غير اسمه - متقولش حاجة عن مشاعره أو مشاكله أو أي حاجة اتقالت في الخاص."
         )
 
     try:
