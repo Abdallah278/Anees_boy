@@ -155,6 +155,19 @@ MOTIVATIONAL_QUOTES = [
     "بكرة يوم جديد، وإنت مسموح تاخد وقتك عشان توصله. ✨",
 ]
 
+DAILY_FORTUNES = [
+    "🌞 طاقة النهاردة: يوم كويس لتصفية دماغك من حاجة كانت مضايقاك، خد نفس عميق وابدأ خفيف.",
+    "🌙 طاقة النهاردة: ممكن تحس بشوية تعب، ده وقت مناسب تاخد بريك بدل ما تكمل بالعافية.",
+    "✨ طاقة النهاردة: فرصة كويسة إنك تبتدي حاجة كنت مؤجلها، حتى لو خطوة صغيرة.",
+    "🌿 طاقة النهاردة: يوم مناسب للصفا مع نفسك، ابعد شوية عن الضوضا اللي حواليك.",
+    "🔥 طاقة النهاردة: حماسك ممكن يكون عالي، استغله في حاجة تفرحك مش تتعبك.",
+    "🌤️ طاقة النهاردة: خليك رحيم مع نفسك أكتر من العادي، مش كل يوم لازم يبقى مثالي.",
+    "💫 طاقة النهاردة: فرصة كويسة تتواصل مع حد افتقدته، مكالمة بسيطة ممكن تفرق.",
+    "🌊 طاقة النهاردة: لو حاسس بضغط، جرب تأجل قرار مهم لبكرة بدل ما تاخده وانت متضايق.",
+    "🍃 طاقة النهاردة: يوم كويس للامتنان، فكر في حاجة صغيرة كنت شاكر عليها.",
+    "🌸 طاقة النهاردة: مسموح تقول 'لأ' النهاردة من غير ما تحس بالذنب.",
+]
+
 # ---------- ألعاب حقيقية للتسلية ----------
 
 PROVERBS = [
@@ -230,6 +243,7 @@ def init_db():
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS private_chat_id BIGINT")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TEXT")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reminder_at TEXT")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS style TEXT DEFAULT 'warm'")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -240,6 +254,24 @@ def init_db():
     CREATE TABLE IF NOT EXISTS banned_users (
         user_id BIGINT PRIMARY KEY,
         banned_at TEXT
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS journal_entries (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT,
+        content TEXT,
+        timestamp TEXT
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS future_messages (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
+        private_chat_id BIGINT,
+        content TEXT,
+        deliver_at TEXT,
+        delivered BOOLEAN DEFAULT FALSE
     )
     """)
     conn.commit()
@@ -337,6 +369,15 @@ def set_user_name(user_id: int, name: str):
     conn.close()
 
 
+def set_user_style(user_id: int, style: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET style = %s WHERE chat_id = %s", (style, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 def save_mood(user_id: int, score: int):
     conn = get_db()
     cur = conn.cursor()
@@ -360,6 +401,48 @@ def get_moods(user_id: int, limit: int = 30):
     cur.close()
     conn.close()
     return list(reversed(rows))
+
+
+def get_mood_streak(user_id: int) -> int:
+    """بيحسب عدد الأيام المتتالية اللي المستخدم سجّل فيها مزاجه (لغاية النهاردة أو أمبارح)."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT DISTINCT timestamp FROM moods WHERE chat_id = %s ORDER BY timestamp DESC",
+        (str(user_id),),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        return 0
+
+    days = sorted({datetime.fromisoformat(r["timestamp"]).date() for r in rows}, reverse=True)
+    today = datetime.now(timezone.utc).date()
+
+    if days[0] not in (today, today - timedelta(days=1)):
+        return 0  # آخر تسجيل كان قبل بكرة، السلسلة اتكسرت
+
+    streak = 1
+    for i in range(1, len(days)):
+        if (days[i - 1] - days[i]).days == 1:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def streak_badge(streak: int) -> str:
+    if streak >= 30:
+        return "🏆"
+    if streak >= 14:
+        return "💎"
+    if streak >= 7:
+        return "🔥"
+    if streak >= 3:
+        return "✨"
+    return ""
 
 
 def get_all_private_users():
@@ -473,6 +556,66 @@ def is_user_banned(user_id: int) -> bool:
     cur.close()
     conn.close()
     return row is not None
+
+
+def save_journal_entry(user_id: int, content: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO journal_entries (chat_id, content, timestamp) VALUES (%s, %s, %s)",
+        (user_id, content, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_journal_entries(user_id: int, limit: int = 5):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT content, timestamp FROM journal_entries WHERE chat_id = %s ORDER BY id DESC LIMIT %s",
+        (user_id, limit),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def save_future_message(user_id: int, private_chat_id: int, content: str, deliver_at: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO future_messages (user_id, private_chat_id, content, deliver_at, delivered) "
+        "VALUES (%s, %s, %s, %s, FALSE)",
+        (user_id, private_chat_id, content, deliver_at),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_due_future_messages():
+    conn = get_db()
+    cur = conn.cursor()
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute("SELECT * FROM future_messages WHERE delivered = FALSE AND deliver_at <= %s", (now,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def mark_future_message_delivered(msg_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE future_messages SET delivered = TRUE WHERE id = %s", (msg_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 
 
 # كلمات تستدعي تنبيه الأدمن (رقابة محتوى أساسية - قائمة قابلة للتوسيع)
@@ -723,6 +866,13 @@ async def call_ai_race(system_prompt: str, history: list) -> str:
     raise RuntimeError("كل مزودي الذكاء الاصطناعي فشلوا")
 
 
+STYLE_PROMPTS = {
+    "warm": "",  # الأسلوب الافتراضي، مفيش إضافة
+    "fun": "\nأسلوب إضافي مطلوب: خليك مرح أكتر من العادي، استخدم إيموجي وخفة دم أكتر، من غير ما تقلل من جدية المشاعر لو الموضوع فعلاً صعب.",
+    "calm": "\nأسلوب إضافي مطلوب: خليك هادي جدًا وبطيء الإيقاع في كلامك، جمل قصيرة ومريحة، وابعد عن أي حماس زيادة أو إيموجي كتير.",
+}
+
+
 def build_personalized_system_prompt(user_id: int) -> str:
     user = get_user_profile(user_id)
     extra = ""
@@ -730,6 +880,8 @@ def build_personalized_system_prompt(user_id: int) -> str:
         extra += f"\nاسم المستخدم: {user['name']}."
     if user and user["profile_summary"]:
         extra += f"\nملاحظات عن المستخدم من محادثات سابقة: {user['profile_summary']}"
+    if user and user["style"]:
+        extra += STYLE_PROMPTS.get(user["style"], "")
     return BASE_SYSTEM_PROMPT + extra
 
 
@@ -797,8 +949,11 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     score = int(query.data.split("_")[1])
     save_mood(user_id, score)
     quote = random.choice(MOTIVATIONAL_QUOTES)
+    streak = get_mood_streak(user_id)
+    badge = streak_badge(streak)
+    streak_line = f"\n{badge} بقالك {streak} يوم متتالي بتسجل مزاجك! استمر كده" if streak >= 2 else ""
     await query.edit_message_text(
-        f"تمام، سجلت مزاجك النهاردة: {score}/5 🙏\n\n"
+        f"تمام، سجلت مزاجك النهاردة: {score}/5 🙏{streak_line}\n\n"
         f"┏━━━━━━━━━━━━━┓\n{quote}\n┗━━━━━━━━━━━━━┛\n\n"
         f"تقدر تشوف تطور مزاجك بـ /chart"
     )
@@ -859,12 +1014,225 @@ async def start_joke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(random.choice(JOKES))
 
 
+async def start_fortune(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(random.choice(DAILY_FORTUNES))
+
+
+async def style_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[
+        InlineKeyboardButton("💙 دافئ (الافتراضي)", callback_data="style_warm"),
+        InlineKeyboardButton("😄 مرح", callback_data="style_fun"),
+    ], [
+        InlineKeyboardButton("🌙 هادئ", callback_data="style_calm"),
+    ]]
+    await update.effective_message.reply_text(
+        "عايزني أتكلم معاك بأسلوب إيه؟", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def style_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    style = query.data.split("_", 1)[1]
+    user_id = update.effective_user.id
+    set_user_style(user_id, style)
+    labels = {"warm": "دافئ 💙", "fun": "مرح 😄", "calm": "هادئ 🌙"}
+    await query.edit_message_text(f"تمام، هبقى أكلمك بأسلوب {labels.get(style, style)} من دلوقتي 🙌")
+
+
+# ================= يوميات خاصة =================
+
+JOURNAL_PROMPTS = [
+    "إيه أكتر حاجة فرحتك النهاردة؟",
+    "إيه اللي كان صعب عليك النهاردة؟",
+    "لو تقدر تغيّر حاجة واحدة في يومك، هتغيّر إيه؟",
+    "إيه حاجة اتعلمتها عن نفسك النهاردة؟",
+    "مين حد أثّر فيك بشكل كويس النهاردة؟",
+]
+
+
+async def start_journal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["journal_awaiting"] = True
+    question = random.choice(JOURNAL_PROMPTS)
+    await update.effective_message.reply_text(f"📔 وقت اليوميات:\n{question}")
+
+
+async def journal_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    entries = get_journal_entries(user_id, limit=5)
+    if not entries:
+        await update.effective_message.reply_text("لسه معملتش أي يوميات، ابدأ بكلمة \"يومياتي\" 📔")
+        return
+    lines = ["📔 آخر يومياتك:\n"]
+    for e in entries:
+        date_str = datetime.fromisoformat(e["timestamp"]).strftime("%d/%m")
+        lines.append(f"🗓️ {date_str}: {e['content'][:100]}")
+    await update.effective_message.reply_text("\n".join(lines))
+
+
+async def try_handle_journal_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not context.user_data.get("journal_awaiting"):
+        return False
+    context.user_data["journal_awaiting"] = False
+    text = update.message.text or ""
+    save_journal_entry(update.effective_user.id, text)
+    await update.message.reply_text("تمام، اتسجلت 📔 تقدر تشوف يومياتك القديمة بكلمة \"يومياتي القديمة\"")
+    return True
+
+
+# ================= رسالة لنفسك في المستقبل =================
+
+FUTURE_TIME_PATTERN = re.compile(
+    r"(?:بعد\s*)?(\d+)\s*(يوم|أيام|ايام|أسبوع|اسبوع|اسابيع|أسابيع|شهر|شهور|أشهر|سنة|سنه|سنين)"
+)
+FUTURE_UNIT_TO_SECONDS = {
+    "يوم": 86400, "أيام": 86400, "ايام": 86400,
+    "أسبوع": 604800, "اسبوع": 604800, "اسابيع": 604800, "أسابيع": 604800,
+    "شهر": 2592000, "شهور": 2592000, "أشهر": 2592000,
+    "سنة": 31536000, "سنه": 31536000, "سنين": 31536000,
+}
+
+
+async def start_future_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["future_state"] = "awaiting_message"
+    await update.effective_message.reply_text("اكتب الرسالة اللي عايز تبعتها لنفسك في المستقبل 📬")
+
+
+async def try_handle_future_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    state = context.user_data.get("future_state")
+    text = (update.message.text or "").strip()
+
+    if state == "awaiting_message":
+        context.user_data["future_message_content"] = text
+        context.user_data["future_state"] = "awaiting_time"
+        await update.message.reply_text(
+            "تمام، وامتى تحب توصلك؟ اكتب زي \"بعد شهر\" أو \"بعد سنة\" أو \"بعد أسبوعين\""
+        )
+        return True
+
+    if state == "awaiting_time":
+        match = FUTURE_TIME_PATTERN.search(text)
+        if not match:
+            await update.message.reply_text(
+                "معلش مفهمتش الوقت 🙏 اكتبه زي \"بعد شهر\" أو \"بعد سنة\" أو \"بعد أسبوع\""
+            )
+            return True
+        amount = int(match.group(1))
+        unit = match.group(2)
+        seconds = amount * FUTURE_UNIT_TO_SECONDS[unit]
+        deliver_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+        content = context.user_data.get("future_message_content", "")
+
+        save_future_message(update.effective_user.id, update.effective_chat.id, content, deliver_at)
+
+        context.user_data["future_state"] = None
+        context.user_data["future_message_content"] = None
+        await update.message.reply_text(f"تمام ✅ هبعتلك الرسالة دي بعد {amount} {unit}")
+        return True
+
+    return False
+
+
+async def future_messages_delivery_job(context: ContextTypes.DEFAULT_TYPE):
+    for msg in get_due_future_messages():
+        try:
+            await context.bot.send_message(
+                chat_id=msg["private_chat_id"],
+                text=f"📬 رسالة من نفسك في الماضي:\n\n{msg['content']}",
+            )
+            mark_future_message_delivered(msg["id"])
+        except Exception as e:
+            logger.error(f"Future message delivery failed: {e}")
+
+
+# ================= دعم في مواضيع محددة =================
+
+SPECIALIZED_TOPICS = {
+    "علاقات": "علاقات المستخدم (صداقة، حب، عيلة)",
+    "ثقة بالنفس": "الثقة بالنفس وتقدير الذات",
+    "ثقتي بنفسي": "الثقة بالنفس وتقدير الذات",
+    "ضغط دراسي": "الضغط الدراسي والامتحانات",
+    "ضغط الدراسة": "الضغط الدراسي والامتحانات",
+    "امتحانات": "الضغط الدراسي والامتحانات",
+}
+
+
+async def start_specialized_topic(update: Update, context: ContextTypes.DEFAULT_TYPE, topic_desc: str):
+    prompt = (
+        f"المستخدم عايز يتكلم تحديدًا عن موضوع: {topic_desc}. "
+        "ابدأ بسؤال دافئ ومفتوح يفتحله المجال يتكلم عن الموضوع ده تحديدًا، بأسلوبك المعتاد وبعامية مصرية."
+    )
+    try:
+        result = clean_ai_response(
+            await call_ai_race(prompt, [{"role": "user", "content": f"عايز أتكلم عن {topic_desc}"}])
+        )
+    except Exception as e:
+        logger.error(f"Specialized topic failed: {e}")
+        result = "احكيلي، إيه اللي في بالك في الموضوع ده؟"
+    await update.effective_message.reply_text(result)
+
+
+async def start_topic_relationships(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_specialized_topic(update, context, SPECIALIZED_TOPICS["علاقات"])
+
+
+async def start_topic_confidence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_specialized_topic(update, context, SPECIALIZED_TOPICS["ثقة بالنفس"])
+
+
+async def start_topic_study(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_specialized_topic(update, context, SPECIALIZED_TOPICS["ضغط دراسي"])
+
+
+
 async def start_gratitude(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(GRATEFUL_PROMPT)
 
 
 async def start_grounding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(GROUNDING_TEXT)
+
+
+PERSONALITY_MIN_MESSAGES = 8
+
+
+async def start_personality_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    history = get_recent_messages(user_id, limit=50)
+    user_messages = [m for m in history if m["role"] == "user"]
+    if len(user_messages) < PERSONALITY_MIN_MESSAGES:
+        await update.effective_message.reply_text(
+            "لسه محتاج تتكلم معايا شوية أكتر عشان أقدر أحللك صح 🙂 كلمني كام مرة تانية وجرب تاني بكلمة \"تحليلي\""
+        )
+        return
+
+    await update.effective_message.reply_text("ثانية بس بحلل شخصيتك... 🔍")
+    convo_text = "\n".join(f"{m['role']}: {m['content']}" for m in history)
+    analysis_prompt = (
+        "بناءً على المحادثة دي بس، اعمل تحليل شخصية خفيف وممتع للمستخدم (زي بطاقة شخصية للمشاركة مع الأصحاب). "
+        "اكتب بالعامية المصرية، وخليك بالتنسيق ده بالظبط من غير أي تغيير:\n\n"
+        "🎭 شخصيتك: [لقب مبتكر وممتع بكلمتين أو تلاتة]\n\n"
+        "✨ أبرز صفاتك:\n- [صفة 1]\n- [صفة 2]\n- [صفة 3]\n\n"
+        "🌱 حاجة تقدر تشتغل عليها:\n[نصيحة قصيرة ولطيفة]\n\n"
+        "💬 جملة بتوصفك:\n\"[جملة قصيرة زي شعار]\"\n\n"
+        "خلي التحليل كله إيجابي ولطيف ومبني فعلاً على اللي اتقال في المحادثة، مش عام أو مبتذل."
+    )
+    try:
+        result = clean_ai_response(
+            await call_ai_race(analysis_prompt, [{"role": "user", "content": convo_text}])
+        )
+    except Exception as e:
+        logger.error(f"Personality analysis failed: {e}")
+        await update.effective_message.reply_text("معلش، حصلت مشكلة تقنية بسيطة. جرب تاني كمان شوية 🙏")
+        return
+
+    await update.effective_message.reply_text(
+        f"┏━━━━━━━━━━━━━┓\n{result}\n┗━━━━━━━━━━━━━┛\n\n📸 تقدر تعمل Screenshot وتبعتها لصحابك!"
+    )
+
+
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start_personality_analysis(update, context)
 
 
 # كلمات طبيعية تفتح اللعبة من غير ما تكتب / أوامر - المطابقة بتكون للنص كامل (بعد شيل المسافات)
@@ -977,6 +1345,14 @@ GAME_TRIGGERS = {
     "نكتة": start_joke, "نكته": start_joke,
     "امتنان": start_gratitude,
     "تهدئة": start_grounding,
+    "تحليلي": start_personality_analysis, "حللني": start_personality_analysis, "شخصيتي": start_personality_analysis,
+    "فألي": start_fortune, "طاقتي": start_fortune, "توقعاتي": start_fortune,
+    "يومياتي": start_journal, "يوميات": start_journal,
+    "يومياتي القديمة": journal_history_command,
+    "رسالة للمستقبل": start_future_message, "رساله للمستقبل": start_future_message,
+    "علاقات": start_topic_relationships,
+    "ثقة بالنفس": start_topic_confidence, "ثقتي بنفسي": start_topic_confidence,
+    "ضغط دراسي": start_topic_study, "ضغط الدراسة": start_topic_study, "امتحانات": start_topic_study,
 }
 
 
@@ -985,9 +1361,12 @@ async def maybe_start_game_by_trigger(update: Update, context: ContextTypes.DEFA
     handler = GAME_TRIGGERS.get(text_norm)
     if handler is None:
         return False
-    # لو كان في نص لعبة تانية مستنية إجابة، نلغيها ونبدأ اللعبة الجديدة
+    # لو كان في تدفق تاني مستني إجابة (لعبة/تذكير/يوميات/رسالة مستقبل)، نلغيه ونبدأ الحاجة الجديدة
     context.user_data["awaiting"] = None
     context.user_data["awaiting_data"] = None
+    context.user_data["journal_awaiting"] = False
+    context.user_data["future_state"] = None
+    context.user_data["remind_state"] = None
     await handler(update, context)
     return True
 
@@ -1255,6 +1634,14 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     if await try_handle_reminder_flow(update, context):
         return
 
+    # يوميات لسه مستنية النص
+    if await try_handle_journal_flow(update, context):
+        return
+
+    # رسالة للمستقبل لسه في نص التدفق
+    if await try_handle_future_message_flow(update, context):
+        return
+
     # لو المستخدم كتب كلمة زي "فزورة"/"مثل"/"سؤال" عادي (من غير أوامر)، ابدأ اللعبة على طول
     if await maybe_start_game_by_trigger(update, context):
         return
@@ -1451,6 +1838,12 @@ def main():
     app.add_handler(CommandHandler("riddle", riddle_command))
     app.add_handler(CommandHandler("trivia", trivia_command))
     app.add_handler(CommandHandler("voicetest", voice_test_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("fortune", start_fortune))
+    app.add_handler(CommandHandler("style", style_command))
+    app.add_handler(CommandHandler("journal", start_journal))
+    app.add_handler(CommandHandler("journalhistory", journal_history_command))
+    app.add_handler(CommandHandler("futuremessage", start_future_message))
 
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("stats", stats_command))
@@ -1465,6 +1858,7 @@ def main():
     app.add_handler(CallbackQueryHandler(games_callback, pattern="^game_"))
     app.add_handler(CallbackQueryHandler(trivia_callback, pattern="^trivia_"))
     app.add_handler(CallbackQueryHandler(moderation_callback, pattern="^mod(ban|ignore)_"))
+    app.add_handler(CallbackQueryHandler(style_callback, pattern="^style_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -1473,6 +1867,7 @@ def main():
     job_queue.run_daily(daily_checkin_job, time=dtime(hour=9, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(inactivity_reminder_job, time=dtime(hour=18, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(weekly_summary_job, time=dtime(hour=20, minute=0, tzinfo=CAIRO_TZ))
+    job_queue.run_daily(future_messages_delivery_job, time=dtime(hour=10, minute=0, tzinfo=CAIRO_TZ))
 
     logger.info("Bot is running...")
     app.run_polling()
