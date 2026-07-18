@@ -178,6 +178,29 @@ DAILY_FORTUNES = [
     "🌸 طاقة النهاردة: مسموح تقول 'لأ' النهاردة من غير ما تحس بالذنب.",
 ]
 
+QURAN_VERSES = [
+    "📖 \"إِنَّ مَعَ الْعُسْرِ يُسْرًا\" (الشرح: 6)",
+    "📖 \"وَبَشِّرِ الصَّابِرِينَ\" (البقرة: 155)",
+    "📖 \"فَاذْكُرُونِي أَذْكُرْكُمْ\" (البقرة: 152)",
+    "📖 \"لَا يُكَلِّفُ اللَّهُ نَفْسًا إِلَّا وُسْعَهَا\" (البقرة: 286)",
+    "📖 \"وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ\" (الطلاق: 3)",
+    "📖 \"أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ\" (الرعد: 28)",
+]
+
+HADITHS = [
+    "🕌 قال ﷺ: \"الدُّعَاءُ هُوَ الْعِبَادَةُ\" (رواه أبو داود والترمذي)",
+    "🕌 قال ﷺ: \"تَبَسُّمُكَ فِي وَجْهِ أَخِيكَ صَدَقَةٌ\" (رواه الترمذي)",
+    "🕌 قال ﷺ: \"مَنْ لَا يَرْحَمِ النَّاسَ لَا يَرْحَمْهُ اللَّهُ\" (متفق عليه)",
+    "🕌 قال ﷺ: \"إِنَّ اللَّهَ رَفِيقٌ يُحِبُّ الرِّفْقَ فِي الْأَمْرِ كُلِّهِ\" (متفق عليه)",
+    "🕌 قال ﷺ: \"الْمُؤْمِنُ الْقَوِيُّ خَيْرٌ وَأَحَبُّ إِلَى اللَّهِ مِنَ الْمُؤْمِنِ الضَّعِيفِ\" (رواه مسلم)",
+]
+
+SALAWAT = [
+    "🤍 اللهم صلِّ وسلم على سيدنا محمد وعلى آله وصحبه أجمعين 🤍",
+    "🤍 صلّوا على النبي ﷺ.. \"مَنْ صَلَّى عَلَيَّ صَلَاةً صَلَّى اللَّهُ عَلَيْهِ بِهَا عَشْرًا\"",
+    "🤍 اللهم صلِّ على سيدنا محمد كما صليت على سيدنا إبراهيم",
+]
+
 # ---------- ألعاب حقيقية للتسلية ----------
 
 PROVERBS = [
@@ -290,6 +313,13 @@ def init_db():
         user_id BIGINT,
         display_name TEXT,
         PRIMARY KEY (group_chat_id, user_id)
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS active_groups (
+        group_chat_id BIGINT PRIMARY KEY,
+        title TEXT,
+        last_seen TEXT
     )
     """)
     conn.commit()
@@ -667,6 +697,29 @@ def get_group_member_names(group_chat_id: int, exclude_user_id: int = None, limi
     cur.close()
     conn.close()
     return [r["display_name"] for r in rows]
+
+
+def upsert_active_group(group_chat_id: int, title: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO active_groups (group_chat_id, title, last_seen) VALUES (%s, %s, %s) "
+        "ON CONFLICT (group_chat_id) DO UPDATE SET title = EXCLUDED.title, last_seen = EXCLUDED.last_seen",
+        (group_chat_id, title, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_all_active_groups():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT group_chat_id, title FROM active_groups")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 
 
@@ -1244,6 +1297,101 @@ async def start_topic_study(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_specialized_topic(update, context, SPECIALIZED_TOPICS["ضغط دراسي"])
 
 
+# ================= همسة (رسالة سرية لشخص معين في الجروب) =================
+
+WHISPERS = {}
+_next_whisper_id = 1
+
+
+def store_whisper(sender_id: int, sender_name: str, target_id: int, content: str) -> int:
+    global _next_whisper_id
+    whisper_id = _next_whisper_id
+    _next_whisper_id += 1
+    WHISPERS[whisper_id] = {
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "target_id": target_id,
+        "content": content,
+    }
+    return whisper_id
+
+
+async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    text = update.message.text or ""
+    text_stripped = text.strip()
+    is_group = update.effective_chat.type in ("group", "supergroup")
+
+    if not is_group or update.message.reply_to_message is None:
+        return False
+    if not (text_stripped.startswith("همسة") or text_stripped.startswith("همسه")):
+        return False
+
+    target_user = update.message.reply_to_message.from_user
+    if target_user is None or target_user.is_bot:
+        return False
+
+    whisper_content = text_stripped.split(" ", 1)[1].strip() if " " in text_stripped else ""
+    if not whisper_content:
+        await update.message.reply_text("اكتب الهمسة بعد الكلمة كده: \"همسة كلامك هنا\" وإنت رادّ على رسالة الشخص")
+        return True
+
+    sender = update.effective_user
+    sender_name = sender.full_name or sender.username or "حد ما"
+
+    whisper_id = store_whisper(sender.id, sender_name, target_user.id, whisper_content)
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass  # لو البوت مش أدمن أو حصل خطأ، نكمل عادي من غير ما نمسح
+
+    keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🤫 همسة من {sender_name} لـ {target_user.full_name}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return True
+
+
+async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    whisper_id = int(query.data.split("_", 1)[1])
+    whisper = WHISPERS.get(whisper_id)
+
+    if whisper is None:
+        await query.answer("الهمسة دي خلصت أو مش موجودة 🙅‍♂️", show_alert=True)
+        return
+
+    if update.effective_user.id != whisper["target_id"]:
+        await query.answer("الهمسة دي مش ليك 🙅‍♂️", show_alert=True)
+        return
+
+    await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
+
+
+# ================= مساعدة: قائمة الأوامر =================
+
+HELP_TEXT = (
+    "🤖 حاجات تقدر تكتبها لأنيس:\n\n"
+    "💬 دعم نفسي: اتكلم عادي أو جرب \"علاقات\"، \"ثقة بالنفس\"، \"ضغط دراسي\"\n"
+    "🎮 تسلية: فزورة، مثل، سؤال، نكتة\n"
+    "🧘 تمارين: تهدئة، امتنان، تمرين تنفس\n"
+    "📊 مزاج: /mood لتسجيله، /chart لتطوره\n"
+    "📔 يومياتي - يوميات يومية\n"
+    "⏰ فكرني - تذكير بوقت تحدده\n"
+    "📬 رسالة للمستقبل - تتبعتلك بعد فترة\n"
+    "🔮 فألي - طاقة اليوم\n"
+    "🎭 تحليلي - تحليل شخصيتك\n"
+    "🎨 /style - تختار أسلوب أنيس (دافئ/مرح/هادئ)\n"
+    "🤫 همسة (وإنت رادّ على حد) - رسالة سرية ليه بس\n"
+)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(HELP_TEXT)
+
+
 
 async def start_gratitude(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(GRATEFUL_PROMPT)
@@ -1409,6 +1557,7 @@ GAME_TRIGGERS = {
     "علاقات": start_topic_relationships,
     "ثقة بالنفس": start_topic_confidence, "ثقتي بنفسي": start_topic_confidence,
     "ضغط دراسي": start_topic_study, "ضغط الدراسة": start_topic_study, "امتحانات": start_topic_study,
+    "مساعدة": help_command, "الاوامر": help_command, "الأوامر": help_command,
 }
 
 
@@ -1635,6 +1784,16 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Weekly summary send error for {user['chat_id']}: {e}")
 
 
+async def hourly_religious_message_job(context: ContextTypes.DEFAULT_TYPE):
+    content_pool = QURAN_VERSES + HADITHS + SALAWAT
+    message = random.choice(content_pool)
+    for group in get_all_active_groups():
+        try:
+            await context.bot.send_message(chat_id=group["group_chat_id"], text=message)
+        except Exception as e:
+            logger.error(f"Hourly religious message failed for group {group['group_chat_id']}: {e}")
+
+
 # ================= الرسائل العادية =================
 
 def get_context_key(user_id: int, chat_id: int, is_group: bool) -> str:
@@ -1659,7 +1818,12 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     user_text = update.message.text or ""
     user_id = update.effective_user.id
 
+    # همسة: بتشتغل جوه الجروب من غير ما تحتاج تنادي على البوت بالاسم
+    if await try_handle_whisper(update, context):
+        return
+
     if is_group:
+        upsert_active_group(update.effective_chat.id, update.effective_chat.title or "")
         replied_to_bot = (
             update.message.reply_to_message is not None
             and update.message.reply_to_message.from_user is not None
@@ -1915,6 +2079,7 @@ def main():
     app.add_handler(CommandHandler("journal", start_journal))
     app.add_handler(CommandHandler("journalhistory", journal_history_command))
     app.add_handler(CommandHandler("futuremessage", start_future_message))
+    app.add_handler(CommandHandler("help", help_command))
 
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("stats", stats_command))
@@ -1930,6 +2095,7 @@ def main():
     app.add_handler(CallbackQueryHandler(trivia_callback, pattern="^trivia_"))
     app.add_handler(CallbackQueryHandler(moderation_callback, pattern="^mod(ban|ignore)_"))
     app.add_handler(CallbackQueryHandler(style_callback, pattern="^style_"))
+    app.add_handler(CallbackQueryHandler(whisper_callback, pattern="^whisper_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -1939,6 +2105,7 @@ def main():
     job_queue.run_daily(inactivity_reminder_job, time=dtime(hour=18, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(weekly_summary_job, time=dtime(hour=20, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(future_messages_delivery_job, time=dtime(hour=10, minute=0, tzinfo=CAIRO_TZ))
+    job_queue.run_repeating(hourly_religious_message_job, interval=3600, first=60)
 
     logger.info("Bot is running...")
     app.run_polling()
