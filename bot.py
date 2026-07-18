@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 
 import google.generativeai as genai
 from openai import OpenAI
+import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, MessageHandler,
@@ -43,10 +44,15 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_MODEL_NAME = "openai/gpt-oss-120b"
 
+# Claude (اختياري) - بيبقى الأساسي لو المفتاح موجود، أعلى جودة في الفهم والأسلوب
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL_NAME = "claude-sonnet-5"
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 dahl_client = OpenAI(api_key=DAHL_API_KEY, base_url=DAHL_BASE_URL) if DAHL_API_KEY else None
 groq_client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL) if GROQ_API_KEY else None
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 GEMINI_MODEL_NAME = "gemini-3.1-flash-lite"  # الأسرع، رجعناله عشان البطء
 
 logging.basicConfig(level=logging.INFO)
@@ -654,6 +660,19 @@ def call_groq_chat(system_prompt: str, history: list) -> str:
     return response.choices[0].message.content
 
 
+def call_claude(system_prompt: str, history: list) -> str:
+    if claude_client is None:
+        raise RuntimeError("Claude مش متظبط (مفيش ANTHROPIC_API_KEY)")
+    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    response = claude_client.messages.create(
+        model=CLAUDE_MODEL_NAME,
+        system=system_prompt,
+        messages=messages,
+        max_tokens=500,
+    )
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
 def clean_ai_response(text: str) -> str:
     """شبكة أمان: نشيل أي أثر لتفكير داخلي (<think>...</think>) لو الموديل سرّبه بالغلط."""
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -662,8 +681,13 @@ def clean_ai_response(text: str) -> str:
 
 
 async def call_ai_race(system_prompt: str, history: list) -> str:
-    """Gemini هو الأساسي دايمًا (أفضل جودة وأمان). لو فشل (زي تجاوز الحد اليومي)،
-    نجرب Groq (موثوق وسريع)، ولو فشل هو كمان، آخر حل Dahl."""
+    """Claude هو الأساسي (أعلى جودة). لو فشل أو مش متظبط، نجرب Gemini، بعدين Groq، وآخر حل Dahl."""
+    if claude_client is not None:
+        try:
+            return await asyncio.to_thread(call_claude, system_prompt, history)
+        except Exception as e:
+            logger.error(f"Claude failed: {e}")
+
     try:
         return await asyncio.to_thread(call_gemini, system_prompt, history)
     except Exception as e:

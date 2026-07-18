@@ -4,3 +4,4 @@ matplotlib==3.9.2
 tzdata
 openai>=1.0.0
 psycopg2-binary
+anthropic>=0.34.0
