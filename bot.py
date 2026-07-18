@@ -1037,6 +1037,17 @@ async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_joke(update, context)
 
 
+async def voice_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        voice_buf = await asyncio.to_thread(
+            generate_voice_bytes, "أهلاً، أنا أنيس، وده اختبار للرسالة الصوتية."
+        )
+        await update.message.reply_audio(audio=voice_buf, title="أنيس")
+    except Exception as e:
+        logger.error(f"Voice test failed: {e}")
+        await update.message.reply_text(f"حصل خطأ في تحويل الصوت: {e}")
+
+
 async def proverb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_proverb(update, context)
 
@@ -1438,6 +1449,7 @@ def main():
     app.add_handler(CommandHandler("proverb", proverb_command))
     app.add_handler(CommandHandler("riddle", riddle_command))
     app.add_handler(CommandHandler("trivia", trivia_command))
+    app.add_handler(CommandHandler("voicetest", voice_test_command))
 
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("stats", stats_command))
