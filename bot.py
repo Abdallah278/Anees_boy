@@ -1080,11 +1080,20 @@ async def try_handle_journal_flow(update: Update, context: ContextTypes.DEFAULT_
     return True
 
 
+def parse_duration(text: str, units_pattern: str):
+    """بيرجع (amount, unit) - لو مفيش رقم صريح (زي 'بعد سنة')، بيفترض 1."""
+    match = re.search(rf"(?:بعد\s*)?(\d+)\s*({units_pattern})", text)
+    if match:
+        return int(match.group(1)), match.group(2)
+    match = re.search(rf"(?:بعد\s*)?({units_pattern})", text)
+    if match:
+        return 1, match.group(1)
+    return None, None
+
+
 # ================= رسالة لنفسك في المستقبل =================
 
-FUTURE_TIME_PATTERN = re.compile(
-    r"(?:بعد\s*)?(\d+)\s*(يوم|أيام|ايام|أسبوع|اسبوع|اسابيع|أسابيع|شهر|شهور|أشهر|سنة|سنه|سنين)"
-)
+FUTURE_UNITS_PATTERN = "يوم|أيام|ايام|أسبوع|اسبوع|اسابيع|أسابيع|شهر|شهور|أشهر|سنة|سنه|سنين"
 FUTURE_UNIT_TO_SECONDS = {
     "يوم": 86400, "أيام": 86400, "ايام": 86400,
     "أسبوع": 604800, "اسبوع": 604800, "اسابيع": 604800, "أسابيع": 604800,
@@ -1111,14 +1120,12 @@ async def try_handle_future_message_flow(update: Update, context: ContextTypes.D
         return True
 
     if state == "awaiting_time":
-        match = FUTURE_TIME_PATTERN.search(text)
-        if not match:
+        amount, unit = parse_duration(text, FUTURE_UNITS_PATTERN)
+        if amount is None:
             await update.message.reply_text(
                 "معلش مفهمتش الوقت 🙏 اكتبه زي \"بعد شهر\" أو \"بعد سنة\" أو \"بعد أسبوع\""
             )
             return True
-        amount = int(match.group(1))
-        unit = match.group(2)
         seconds = amount * FUTURE_UNIT_TO_SECONDS[unit]
         deliver_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
         content = context.user_data.get("future_message_content", "")
@@ -1238,9 +1245,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # كلمات طبيعية تفتح اللعبة من غير ما تكتب / أوامر - المطابقة بتكون للنص كامل (بعد شيل المسافات)
 # ================= تذكير شخصي (فكّرني) =================
 
-REMINDER_TIME_PATTERN = re.compile(
-    r"(?:بعد\s*)?(\d+)\s*(دقيقة|دقايق|دقيقه|ساعة|ساعه|ساعات|يوم|أيام|ايام)"
-)
+REMINDER_UNITS_PATTERN = "دقيقة|دقايق|دقيقه|ساعة|ساعه|ساعات|يوم|أيام|ايام"
 UNIT_TO_SECONDS = {
     "دقيقة": 60, "دقايق": 60, "دقيقه": 60,
     "ساعة": 3600, "ساعه": 3600, "ساعات": 3600,
@@ -1301,10 +1306,8 @@ async def try_handle_reminder_flow(update: Update, context: ContextTypes.DEFAULT
         return True
 
     if state == "awaiting_time":
-        match = REMINDER_TIME_PATTERN.search(text)
-        if match:
-            amount = int(match.group(1))
-            unit = match.group(2)
+        amount, unit = parse_duration(text, REMINDER_UNITS_PATTERN)
+        if amount is not None:
             seconds = amount * UNIT_TO_SECONDS[unit]
             time_desc = f"{amount} {unit}"
         else:
