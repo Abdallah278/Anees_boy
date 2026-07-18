@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import random
 import asyncio
 import threading
@@ -13,6 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import google.generativeai as genai
+from gtts import gTTS
 from openai import OpenAI
 import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -680,6 +682,19 @@ def clean_ai_response(text: str) -> str:
     return cleaned.strip()
 
 
+VOICE_REPLY_CHANCE = 0.25  # نسبة تحويل الرد لرسالة صوتية (خاص بس، مش جروبات)
+VOICE_MAX_CHARS = 300      # مانبعتش صوت لو الرد طويل جدًا (وقت تحويل أطول)
+
+
+def generate_voice_bytes(text: str) -> io.BytesIO:
+    buf = io.BytesIO()
+    tts = gTTS(text=text, lang="ar")
+    tts.write_to_fp(buf)
+    buf.seek(0)
+    buf.name = "anees_voice.mp3"
+    return buf
+
+
 async def call_ai_race(system_prompt: str, history: list) -> str:
     """Claude هو الأساسي (أعلى جودة). لو فشل أو مش متظبط، نجرب Gemini، بعدين Groq، وآخر حل Dahl."""
     if claude_client is not None:
@@ -1276,6 +1291,19 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     save_message(context_key, "assistant", reply_text)
     if is_private:
         maybe_update_profile(user_id)
+
+    send_as_voice = (
+        is_private
+        and len(reply_text) <= VOICE_MAX_CHARS
+        and random.random() < VOICE_REPLY_CHANCE
+    )
+    if send_as_voice:
+        try:
+            voice_buf = await asyncio.to_thread(generate_voice_bytes, reply_text)
+            await update.message.reply_audio(audio=voice_buf, title="أنيس")
+            return
+        except Exception as e:
+            logger.error(f"TTS failed, falling back to text: {e}")
 
     await update.message.reply_text(reply_text)
 
