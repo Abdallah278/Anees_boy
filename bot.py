@@ -1314,11 +1314,14 @@ WHISPERS = {}
 _next_whisper_id = 1
 
 
-def store_whisper(sender_name: str, target_id: int, content: str) -> int:
+def store_whisper(sender_id: int, sender_name: str, target_id: int, content: str) -> int:
     global _next_whisper_id
     whisper_id = _next_whisper_id
     _next_whisper_id += 1
-    WHISPERS[whisper_id] = {"sender_name": sender_name, "target_id": target_id, "content": content}
+    WHISPERS[whisper_id] = {
+        "sender_id": sender_id, "sender_name": sender_name,
+        "target_id": target_id, "content": content,
+    }
     return whisper_id
 
 
@@ -1382,7 +1385,7 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
     except Exception:
         target_name = "حد في الجروب"
 
-    whisper_id = store_whisper(sender_name, target_id, content)
+    whisper_id = store_whisper(sender.id, sender_name, target_id, content)
     keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
 
     try:
@@ -1408,8 +1411,13 @@ async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("الهمسة دي خلصت أو مش موجودة 🙅‍♂️", show_alert=True)
         return
 
-    if update.effective_user.id != whisper["target_id"]:
+    clicker_id = update.effective_user.id
+    if clicker_id not in (whisper["target_id"], whisper["sender_id"]):
         await query.answer("الهمسة دي مش ليك 🙅‍♂️", show_alert=True)
+        return
+
+    if clicker_id == whisper["sender_id"] and clicker_id != whisper["target_id"]:
+        await query.answer(f"🤫 إنت بعتها، وده اللي كتبته:\n{whisper['content']}", show_alert=True)
         return
 
     await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
