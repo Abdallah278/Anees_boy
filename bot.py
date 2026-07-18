@@ -1030,6 +1030,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     is_private = update.effective_chat.type == "private"
     ensure_user(user_id, private_chat_id=update.effective_chat.id if is_private else None)
+
+    if context.args and context.args[0].startswith("whisper_"):
+        try:
+            _, target_id_str, origin_chat_id_str = context.args[0].split("_", 2)
+            context.user_data["whisper_target"] = int(target_id_str)
+            context.user_data["whisper_origin_chat"] = int(origin_chat_id_str)
+            await update.message.reply_text("تمام، اكتب الهمسة اللي عايز تبعتها 🤫")
+            return
+        except ValueError:
+            pass
+
     await update.message.reply_text(
         "أهلاً بيك 💙 أنا أنيس.\n"
         "ملحوظة مهمة: أنا مساعد ذكاء اصطناعي مش بديل عن معالج نفسي متخصص، لو محتاج مساعدة عاجلة كلم مختص فورًا.\n\n"
@@ -1297,60 +1308,94 @@ async def start_topic_study(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_specialized_topic(update, context, SPECIALIZED_TOPICS["ضغط دراسي"])
 
 
-# ================= همسة (رسالة سرية لشخص معين في الجروب) =================
+# ================= همسة (تتكتب في الخاص، وترجع للجروب بزرار كشف) =================
 
 WHISPERS = {}
 _next_whisper_id = 1
 
 
-def store_whisper(sender_id: int, sender_name: str, target_id: int, content: str) -> int:
+def store_whisper(sender_name: str, target_id: int, content: str) -> int:
     global _next_whisper_id
     whisper_id = _next_whisper_id
     _next_whisper_id += 1
-    WHISPERS[whisper_id] = {
-        "sender_id": sender_id,
-        "sender_name": sender_name,
-        "target_id": target_id,
-        "content": content,
-    }
+    WHISPERS[whisper_id] = {"sender_name": sender_name, "target_id": target_id, "content": content}
     return whisper_id
 
 
 async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    text = update.message.text or ""
-    text_stripped = text.strip()
+    """في الجروب: رد على حد واكتب "همسة" بس، من غير أي محتوى - المحتوى بيتكتب في الخاص بعدين."""
+    text = (update.message.text or "").strip()
     is_group = update.effective_chat.type in ("group", "supergroup")
 
     if not is_group or update.message.reply_to_message is None:
         return False
-    if not (text_stripped.startswith("همسة") or text_stripped.startswith("همسه")):
+    if text not in ("همسة", "همسه"):
         return False
 
     target_user = update.message.reply_to_message.from_user
     if target_user is None or target_user.is_bot:
         return False
 
-    whisper_content = text_stripped.split(" ", 1)[1].strip() if " " in text_stripped else ""
-    if not whisper_content:
-        await update.message.reply_text("اكتب الهمسة بعد الكلمة كده: \"همسة كلامك هنا\" وإنت رادّ على رسالة الشخص")
-        return True
-
     sender = update.effective_user
-    sender_name = sender.full_name or sender.username or "حد ما"
-
-    whisper_id = store_whisper(sender.id, sender_name, target_user.id, whisper_content)
+    if sender.id == target_user.id:
+        await update.message.reply_text("مينفعش تبعت همسة لنفسك 😄")
+        return True
 
     try:
         await update.message.delete()
     except Exception:
         pass  # لو البوت مش أدمن أو حصل خطأ، نكمل عادي من غير ما نمسح
 
-    keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
-    await context.bot.send_message(
+    bot_username = context.bot.username
+    # بنشفّر آيدي الشخص المقصود + آيدي الجروب في اللينك، عشان لما يبعت الهمسة في الخاص نعرف نرجعها فين
+    deep_link = f"https://t.me/{bot_username}?start=whisper_{target_user.id}_{update.effective_chat.id}"
+    keyboard = [[InlineKeyboardButton("📩 ابعت همسة في الخاص", url=deep_link)]]
+    msg = await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🤫 همسة من {sender_name} لـ {target_user.full_name}",
+        text=f"🤫 دوس الزرار عشان تبعت همسة لـ {target_user.full_name}",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    # نمسح رسالة الدعوة دي بعد شوية عشان تفضل نضيفة، من غير ما تأثر لو المسح فشل
+    context.job_queue.run_once(
+        lambda ctx: ctx.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id),
+        when=60,
+    )
+    return True
+
+
+async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """في الخاص: لو المستخدم جاي من زرار الهمسة، الرسالة الجاية منه هي محتوى الهمسة."""
+    target_id = context.user_data.get("whisper_target")
+    origin_chat_id = context.user_data.get("whisper_origin_chat")
+    if target_id is None or origin_chat_id is None:
+        return False
+    context.user_data["whisper_target"] = None
+    context.user_data["whisper_origin_chat"] = None
+
+    content = update.message.text or ""
+    sender = update.effective_user
+    sender_name = sender.full_name or sender.username or "حد ما"
+
+    try:
+        target_chat = await context.bot.get_chat(target_id)
+        target_name = target_chat.full_name or target_chat.first_name or "حد"
+    except Exception:
+        target_name = "حد في الجروب"
+
+    whisper_id = store_whisper(sender_name, target_id, content)
+    keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
+
+    try:
+        await context.bot.send_message(
+            chat_id=origin_chat_id,
+            text=f"🤫 همسة جديدة لـ {target_name}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        await update.message.reply_text("تم إرسال الهمسة ✅ محدش هيعرف إنك إنت اللي بعتها غير اللي هي ليه")
+    except Exception as e:
+        logger.error(f"Whisper delivery failed: {e}")
+        await update.message.reply_text("حصلت مشكلة في إرسال الهمسة، جرب تاني 🙏")
+
     return True
 
 
@@ -1384,7 +1429,7 @@ HELP_TEXT = (
     "🔮 فألي - طاقة اليوم\n"
     "🎭 تحليلي - تحليل شخصيتك\n"
     "🎨 /style - تختار أسلوب أنيس (دافئ/مرح/هادئ)\n"
-    "🤫 همسة (وإنت رادّ على حد) - رسالة سرية ليه بس\n"
+    "🤫 همسة (رد على رسالة حد واكتب \"همسة\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
 )
 
 
@@ -1820,6 +1865,10 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
 
     # همسة: بتشتغل جوه الجروب من غير ما تحتاج تنادي على البوت بالاسم
     if await try_handle_whisper(update, context):
+        return
+
+    # همسة: المستخدم جاي من الزرار وبيكتب محتوى الهمسة في الخاص
+    if is_private and await try_handle_whisper_compose(update, context):
         return
 
     if is_group:
