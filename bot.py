@@ -322,6 +322,16 @@ def init_db():
         last_seen TEXT
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS whispers (
+        id SERIAL PRIMARY KEY,
+        sender_id BIGINT,
+        sender_name TEXT,
+        target_id BIGINT,
+        content TEXT,
+        created_at TEXT
+    )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -1310,19 +1320,41 @@ async def start_topic_study(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= همسة (تتكتب في الخاص، وترجع للجروب بزرار كشف) =================
 
-WHISPERS = {}
-_next_whisper_id = 1
-
-
 def store_whisper(sender_id: int, sender_name: str, target_id: int, content: str) -> int:
-    global _next_whisper_id
-    whisper_id = _next_whisper_id
-    _next_whisper_id += 1
-    WHISPERS[whisper_id] = {
-        "sender_id": sender_id, "sender_name": sender_name,
-        "target_id": target_id, "content": content,
-    }
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO whispers (sender_id, sender_name, target_id, content, created_at) "
+        "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (sender_id, sender_name, target_id, content, datetime.now(timezone.utc).isoformat()),
+    )
+    whisper_id = cur.fetchone()["id"]
+    conn.commit()
+    cur.close()
+    conn.close()
     return whisper_id
+
+
+def get_whisper(whisper_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM whispers WHERE id = %s", (whisper_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def delete_old_whispers(older_than_hours: int = 24) -> int:
+    conn = get_db()
+    cur = conn.cursor()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=older_than_hours)).isoformat()
+    cur.execute("DELETE FROM whispers WHERE created_at < %s", (cutoff,))
+    deleted_count = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    return deleted_count
 
 
 async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1332,7 +1364,7 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not is_group or update.message.reply_to_message is None:
         return False
-    if text not in ("همسة", "همسه"):
+    if text != "هه":
         return False
 
     target_user = update.message.reply_to_message.from_user
@@ -1343,11 +1375,6 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if sender.id == target_user.id:
         await update.message.reply_text("مينفعش تبعت همسة لنفسك 😄")
         return True
-
-    try:
-        await update.message.delete()
-    except Exception:
-        pass  # لو البوت مش أدمن أو حصل خطأ، نكمل عادي من غير ما نمسح
 
     bot_username = context.bot.username
     # بنشفّر آيدي الشخص المقصود + آيدي الجروب في اللينك، عشان لما يبعت الهمسة في الخاص نعرف نرجعها فين
@@ -1372,10 +1399,15 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
     origin_chat_id = context.user_data.get("whisper_origin_chat")
     if target_id is None or origin_chat_id is None:
         return False
+
+    content = (update.message.text or "").strip()
+    if not content:
+        await update.message.reply_text("ابعت نص الهمسة (كتابة عادية بس، مش صورة أو صوت أو ستيكر) 🙏")
+        return True  # مسحناش الحالة، فلسه مستنيين نص الهمسة
+
     context.user_data["whisper_target"] = None
     context.user_data["whisper_origin_chat"] = None
 
-    content = update.message.text or ""
     sender = update.effective_user
     sender_name = sender.full_name or sender.username or "حد ما"
 
@@ -1387,14 +1419,21 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
 
     whisper_id = store_whisper(sender.id, sender_name, target_id, content)
     keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
+    # منشن حقيقي بيبعت إشعار للشخص المقصود، مش بس اسمه كنص عادي
+    mention = f'<a href="tg://user?id={target_id}">{target_name}</a>'
 
     try:
         await context.bot.send_message(
             chat_id=origin_chat_id,
-            text=f"🤫 همسة جديدة لـ {target_name}",
+            text=f"🤫 همسة جديدة لـ {mention}",
             reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML",
         )
         await update.message.reply_text("تم إرسال الهمسة ✅ محدش هيعرف إنك إنت اللي بعتها غير اللي هي ليه")
+        try:
+            await update.message.delete()  # نمسح نص الهمسة من الشات الخاص بينا كمان
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Whisper delivery failed: {e}")
         await update.message.reply_text("حصلت مشكلة في إرسال الهمسة، جرب تاني 🙏")
@@ -1405,7 +1444,7 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
 async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     whisper_id = int(query.data.split("_", 1)[1])
-    whisper = WHISPERS.get(whisper_id)
+    whisper = get_whisper(whisper_id)
 
     if whisper is None:
         await query.answer("الهمسة دي خلصت أو مش موجودة 🙅‍♂️", show_alert=True)
@@ -1437,7 +1476,7 @@ HELP_TEXT = (
     "🔮 فألي - طاقة اليوم\n"
     "🎭 تحليلي - تحليل شخصيتك\n"
     "🎨 /style - تختار أسلوب أنيس (دافئ/مرح/هادئ)\n"
-    "🤫 همسة (رد على رسالة حد واكتب \"همسة\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
+    "🤫 همسة (رد على رسالة حد واكتب \"هه\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
 )
 
 
@@ -1847,6 +1886,12 @@ async def hourly_religious_message_job(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Hourly religious message failed for group {group['group_chat_id']}: {e}")
 
 
+async def cleanup_old_whispers_job(context: ContextTypes.DEFAULT_TYPE):
+    deleted = delete_old_whispers(older_than_hours=24)
+    if deleted:
+        logger.info(f"Deleted {deleted} old whisper(s)")
+
+
 # ================= الرسائل العادية =================
 
 def get_context_key(user_id: int, chat_id: int, is_group: bool) -> str:
@@ -2163,6 +2208,7 @@ def main():
     job_queue.run_daily(weekly_summary_job, time=dtime(hour=20, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(future_messages_delivery_job, time=dtime(hour=10, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_repeating(hourly_religious_message_job, interval=3600, first=60)
+    job_queue.run_daily(cleanup_old_whispers_job, time=dtime(hour=4, minute=0, tzinfo=CAIRO_TZ))
 
     logger.info("Bot is running...")
     app.run_polling()
