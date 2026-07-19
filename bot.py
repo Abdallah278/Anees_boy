@@ -1452,7 +1452,7 @@ async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     clicker_id = update.effective_user.id
-    if clicker_id != whisper["target_id"]:
+    if clicker_id not in (whisper["target_id"], whisper["sender_id"]):
         await query.answer("الهمسة دي مش ليك 🙅‍♂️", show_alert=True)
         return
 
@@ -1923,10 +1923,17 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
 
     if is_group:
         upsert_active_group(update.effective_chat.id, update.effective_chat.title or "")
+        replied_msg = update.message.reply_to_message
+        is_reply_to_whisper_msg = (
+            replied_msg is not None
+            and replied_msg.text is not None
+            and replied_msg.text.startswith("🤫 همسة جديدة من")
+        )
         replied_to_bot = (
-            update.message.reply_to_message is not None
-            and update.message.reply_to_message.from_user is not None
-            and update.message.reply_to_message.from_user.id == context.bot.id
+            replied_msg is not None
+            and replied_msg.from_user is not None
+            and replied_msg.from_user.id == context.bot.id
+            and not is_reply_to_whisper_msg
         )
         if not (message_mentions_bot(user_text) or replied_to_bot):
             return
