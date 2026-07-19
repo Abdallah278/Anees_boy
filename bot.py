@@ -1364,7 +1364,7 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not is_group or update.message.reply_to_message is None:
         return False
-    if text != "هه":
+    if text not in ("انوسة", "أنوسة", "انانيس", "ننوس"):
         return False
 
     target_user = update.message.reply_to_message.from_user
@@ -1419,17 +1419,18 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
 
     whisper_id = store_whisper(sender.id, sender_name, target_id, content)
     keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
-    # منشن حقيقي بيبعت إشعار للشخص المقصود، مش بس اسمه كنص عادي
-    mention = f'<a href="tg://user?id={target_id}">{target_name}</a>'
+    # منشن حقيقي بيبعت إشعار للطرفين (الراسل والمستقبِل)
+    sender_mention = f'<a href="tg://user?id={sender.id}">{sender_name}</a>'
+    target_mention = f'<a href="tg://user?id={target_id}">{target_name}</a>'
 
     try:
         await context.bot.send_message(
             chat_id=origin_chat_id,
-            text=f"🤫 همسة جديدة لـ {mention}",
+            text=f"🤫 همسة جديدة من {sender_mention} لـ {target_mention}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML",
         )
-        await update.message.reply_text("تم إرسال الهمسة ✅ محدش هيعرف إنك إنت اللي بعتها غير اللي هي ليه")
+        await update.message.reply_text("تم إرسال الهمسة ✅")
         try:
             await update.message.delete()  # نمسح نص الهمسة من الشات الخاص بينا كمان
         except Exception:
@@ -1451,12 +1452,8 @@ async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     clicker_id = update.effective_user.id
-    if clicker_id not in (whisper["target_id"], whisper["sender_id"]):
+    if clicker_id != whisper["target_id"]:
         await query.answer("الهمسة دي مش ليك 🙅‍♂️", show_alert=True)
-        return
-
-    if clicker_id == whisper["sender_id"] and clicker_id != whisper["target_id"]:
-        await query.answer(f"🤫 إنت بعتها، وده اللي كتبته:\n{whisper['content']}", show_alert=True)
         return
 
     await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
@@ -1476,7 +1473,7 @@ HELP_TEXT = (
     "🔮 فألي - طاقة اليوم\n"
     "🎭 تحليلي - تحليل شخصيتك\n"
     "🎨 /style - تختار أسلوب أنيس (دافئ/مرح/هادئ)\n"
-    "🤫 همسة (رد على رسالة حد واكتب \"هه\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
+    "🤫 همسة (رد على رسالة حد واكتب \"انوسة\" أو \"ننوس\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
 )
 
 
