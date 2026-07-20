@@ -1492,7 +1492,7 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not is_group or update.message.reply_to_message is None:
         return False
-    if text not in ("انوسة", "أنوسة", "انانيس", "ننوس"):
+    if text not in ("انوسة", "أنوسة", "انانيس", "ننوس", "همس"):
         return False
 
     target_user = update.message.reply_to_message.from_user
@@ -1584,25 +1584,26 @@ async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("الهمس ده مش ليك 🙅‍♂️", show_alert=True)
         return
 
-    # لو المستقبِل هو اللي بيفتحها أول مرة، نبلّغ الراسل إنها اتشافت
+    # نفتح الهمس فورًا الأول، عشان الزرار متتعلقش بأي مشكلة تانية
+    await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
+
+    # بعد ما فتحناها، نجرب نبلّغ الراسل (لو حصلت مشكلة هنا مش هتأثر على فتح الهمس)
     if clicker_id == whisper["target_id"] and clicker_id != whisper["sender_id"] and not whisper["seen"]:
-        mark_whisper_seen(whisper["id"])
-        sender_profile = get_user_profile(whisper["sender_id"])
-        if sender_profile and sender_profile["private_chat_id"]:
-            try:
-                target_chat = await context.bot.get_chat(whisper["target_id"])
-                target_name = target_chat.full_name or target_chat.first_name or "الشخص"
-            except Exception:
-                target_name = "الشخص"
-            try:
+        try:
+            mark_whisper_seen(whisper["id"])
+            sender_profile = get_user_profile(whisper["sender_id"])
+            if sender_profile and sender_profile["private_chat_id"]:
+                try:
+                    target_chat = await context.bot.get_chat(whisper["target_id"])
+                    target_name = target_chat.full_name or target_chat.first_name or "الشخص"
+                except Exception:
+                    target_name = "الشخص"
                 await context.bot.send_message(
                     chat_id=sender_profile["private_chat_id"],
                     text=f"👀 {target_name} شاف الهمس اللي بعتّه له",
                 )
-            except Exception as e:
-                logger.error(f"Failed to notify whisper sender: {e}")
-
-    await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
+        except Exception as e:
+            logger.error(f"Failed to notify whisper sender: {e}")
 
 
 # ================= مساعدة: قائمة الأوامر =================
