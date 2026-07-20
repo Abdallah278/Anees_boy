@@ -5,6 +5,7 @@ import random
 import asyncio
 import threading
 import psycopg2
+import requests
 from psycopg2.extras import RealDictCursor
 import logging
 from datetime import datetime, timezone, timedelta, time as dtime
@@ -14,10 +15,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import google.generativeai as genai
-import edge_tts
 from openai import OpenAI
 import anthropic
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, MessageHandler,
     CommandHandler, CallbackQueryHandler, filters,
@@ -67,6 +67,9 @@ INACTIVITY_DAYS = 3  # بعد كام يوم صمت نبعت تذكير
 # آي دي الأدمن (صاحب البوت) - غيّره من هنا مباشرة لو عايز تضيف أدمن تاني أو تغيّره
 ADMIN_USER_ID = 2057835002
 
+# قناة الاشتراك الإجباري (اختياري) - سيبها فاضية "" لو عايز توقف الميزة دي
+REQUIRED_CHANNEL = "@VIPKIU"
+
 CRISIS_KEYWORDS = [
     "انتحار", "هقتل نفسي", "عايز اموت", "مش عايز اعيش",
     "هموت نفسي", "مفيش فايدة من حياتي", "هاذي نفسي",
@@ -109,7 +112,12 @@ BASE_SYSTEM_PROMPT = """
 3. متكررش كلام المستخدم السلبي بطريقة تكبره أو تعمقه أكتر. سمعه لكن وجهه لمسار إيجابي.
 4. لو المستخدم بيسأل عن حاجة تقنية زي جرعات أدوية أو طرق إيذاء نفس، امنعها ووجهه لطبيب/مختص.
 5. ذكّره بلطف بين فترة وفترة إن الكلام مع معالج نفسي حقيقي مهم لو استمرت الحالة.
-6. خليك مختصر ودافئ، مش محاضرات طويلة. جملتين تلاتة كل مرة عادةً، واسأل سؤال واحد بس لو محتاج توضيح.
+6. **خليك مختصر جدًا، مش محاضرات طويلة.** جملتين تلاتة كل مرة عادةً، واسأل سؤال واحد بس لو محتاج توضيح. **ركّز على الموضوع اللي المستخدم بيتكلم فيه دلوقتي بس** - ممنوع تدخل مواضيع تانية أو تفتح أكتر من نقطة في نفس الرد حتى لو حسيت إنها مرتبطة، ده بيخلي الرد مزدحم ومربك. رد على قد حجم كلامه بالظبط، مش أكتر.
+
+مثال:
+المستخدم: "تعبت من المذاكرة"
+رد ضعيف (تجنبه): "المذاكرة فعلاً متعبة، وده طبيعي خصوصًا مع الضغط. عمومًا لازم تاخد بريكات كل شوية وتنظم وقتك كويس، وميرضيش كمان تاكل صح وتنام كفاية عشان تقدر تركز، وأي حاجة تانية حاسس إنها بتضايقك ممكن نتكلم فيها كمان."
+رد قوي (المطلوب): "فاهمك، المذاكرة بتاخد منك مجهود كبير. تعبان منها إزاي بالظبط - من الكم، ولا من إنك مش قادر تركز؟"
 7. **قاعدة صارمة ومفيهاش استثناء:** لو حد طلب حاجة برا نطاق الدعم النفسي والمشاعر - زي أسئلة عامة، واجبات مدرسية، برمجة، أخبار، وصفات طعام، **ترشيح أغاني أو أفلام أو مسلسلات**، أو أي طلب محتوى ترفيهي - اعتذر بلطف في جملة أو اتنين بس، وارجع على طول تسأله عن حاله. **ممنوع تمامًا** إنك تفصّل أو تقترح أو تدّي قائمة أو تتفاعل مع الطلب بأي شكل حتى لو "بس عشان تجاوبه بسرعة" أو "حاجة بسيطة". لو حسيت إنك بتكتب قائمة أو أسماء أغاني/أفلام/منتجات، وقف فورًا - ده معناه إنك خرجت عن دورك.
 
 مثال:
@@ -329,7 +337,24 @@ def init_db():
         sender_name TEXT,
         target_id BIGINT,
         content TEXT,
-        created_at TEXT
+        created_at TEXT,
+        seen BOOLEAN DEFAULT FALSE
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS group_roles (
+        group_chat_id BIGINT,
+        user_id BIGINT,
+        role TEXT,
+        PRIMARY KEY (group_chat_id, user_id)
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS group_warnings (
+        group_chat_id BIGINT,
+        user_id BIGINT,
+        count INTEGER DEFAULT 0,
+        PRIMARY KEY (group_chat_id, user_id)
     )
     """)
     conn.commit()
@@ -583,6 +608,17 @@ def get_active_today_count() -> int:
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_USER_ID
+
+
+async def is_subscribed_to_required_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    if not REQUIRED_CHANNEL:
+        return True
+    try:
+        member = await context.bot.get_chat_member(REQUIRED_CHANNEL, user_id)
+        return member.status not in ("left", "kicked")
+    except Exception as e:
+        logger.error(f"Subscription check failed: {e}")
+        return True  # لو حصل خطأ في الفحص نفسه، منمنعش المستخدم عشان مشكلة تقنية
 
 
 def ban_user(user_id: int):
@@ -941,22 +977,6 @@ def clean_ai_response(text: str) -> str:
     return cleaned.strip()
 
 
-VOICE_REPLY_CHANCE = 0.25  # نسبة تحويل الرد لرسالة صوتية (خاص بس، مش جروبات)
-VOICE_MAX_CHARS = 300      # مانبعتش صوت لو الرد طويل جدًا (وقت تحويل أطول)
-EDGE_TTS_VOICE = "ar-EG-SalmaNeural"  # صوت مصري طبيعي (مش MSA رسمي زي gTTS)
-
-
-async def generate_voice_bytes(text: str) -> io.BytesIO:
-    communicate = edge_tts.Communicate(text, EDGE_TTS_VOICE)
-    buf = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            buf.write(chunk["data"])
-    buf.seek(0)
-    buf.name = "anees_voice.mp3"
-    return buf
-
-
 async def call_ai_race(system_prompt: str, history: list) -> str:
     """Claude هو الأساسي (أعلى جودة). لو فشل أو مش متظبط، نجرب Gemini، بعدين Groq، وآخر حل Dahl."""
     if claude_client is not None:
@@ -1046,7 +1066,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, target_id_str, origin_chat_id_str = context.args[0].split("_", 2)
             context.user_data["whisper_target"] = int(target_id_str)
             context.user_data["whisper_origin_chat"] = int(origin_chat_id_str)
-            await update.message.reply_text("تمام، اكتب الهمسة اللي عايز تبعتها 🤫")
+            await update.message.reply_text("تمام، اكتب الهمس اللي عايز تبعته 🤫")
             return
         except ValueError:
             pass
@@ -1345,6 +1365,15 @@ def get_whisper(whisper_id: int):
     return row
 
 
+def mark_whisper_seen(whisper_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE whispers SET seen = TRUE WHERE id = %s", (whisper_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 def delete_old_whispers(older_than_hours: int = 24) -> int:
     conn = get_db()
     cur = conn.cursor()
@@ -1357,8 +1386,107 @@ def delete_old_whispers(older_than_hours: int = 24) -> int:
     return deleted_count
 
 
+# ================= رتب وإدارة الجروب =================
+
+ROLE_RANK = {"owner": 100, "co_owner": 80, "manager": 60, "vip": 50, "admin": 40}
+ROLE_LABELS_AR = {
+    "owner": "مالك", "co_owner": "أساسي", "manager": "مدير", "admin": "أدمن", "vip": "مميز",
+}
+ROLE_NAME_TO_KEY = {
+    "مالك": "owner",
+    "اساسي": "co_owner", "أساسي": "co_owner",
+    "مدير": "manager", "ميد": "manager",
+    "ادمن": "admin", "أدمن": "admin",
+    "مميز": "vip",
+}
+
+
+def set_group_role(group_chat_id: int, user_id: int, role: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO group_roles (group_chat_id, user_id, role) VALUES (%s, %s, %s) "
+        "ON CONFLICT (group_chat_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+        (group_chat_id, user_id, role),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def remove_group_role(group_chat_id: int, user_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM group_roles WHERE group_chat_id = %s AND user_id = %s", (group_chat_id, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_group_role(group_chat_id: int, user_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT role FROM group_roles WHERE group_chat_id = %s AND user_id = %s", (group_chat_id, user_id))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row["role"] if row else None
+
+
+def get_all_group_roles(group_chat_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, role FROM group_roles WHERE group_chat_id = %s", (group_chat_id,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def get_user_rank(group_chat_id: int, user_id: int) -> int:
+    if is_admin(user_id):
+        return ROLE_RANK["owner"]
+    role = get_group_role(group_chat_id, user_id)
+    return ROLE_RANK.get(role, 0)
+
+
+def increment_warning(group_chat_id: int, user_id: int) -> int:
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO group_warnings (group_chat_id, user_id, count) VALUES (%s, %s, 1) "
+        "ON CONFLICT (group_chat_id, user_id) DO UPDATE SET count = group_warnings.count + 1 "
+        "RETURNING count",
+        (group_chat_id, user_id),
+    )
+    count = cur.fetchone()["count"]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return count
+
+
+def reset_warnings(group_chat_id: int, user_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM group_warnings WHERE group_chat_id = %s AND user_id = %s", (group_chat_id, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_warning_count(group_chat_id: int, user_id: int) -> int:
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT count FROM group_warnings WHERE group_chat_id = %s AND user_id = %s", (group_chat_id, user_id))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row["count"] if row else 0
+
+
 async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """في الجروب: رد على حد واكتب "همسة" بس، من غير أي محتوى - المحتوى بيتكتب في الخاص بعدين."""
+    """في الجروب: رد على حد واكتب "همس" بس، من غير أي محتوى - المحتوى بيتكتب في الخاص بعدين."""
     text = (update.message.text or "").strip()
     is_group = update.effective_chat.type in ("group", "supergroup")
 
@@ -1373,16 +1501,16 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     sender = update.effective_user
     if sender.id == target_user.id:
-        await update.message.reply_text("مينفعش تبعت همسة لنفسك 😄")
+        await update.message.reply_text("مينفعش تبعت همس لنفسك 😄")
         return True
 
     bot_username = context.bot.username
-    # بنشفّر آيدي الشخص المقصود + آيدي الجروب في اللينك، عشان لما يبعت الهمسة في الخاص نعرف نرجعها فين
+    # بنشفّر آيدي الشخص المقصود + آيدي الجروب في اللينك، عشان لما يبعت الهمس في الخاص نعرف نرجعها فين
     deep_link = f"https://t.me/{bot_username}?start=whisper_{target_user.id}_{update.effective_chat.id}"
-    keyboard = [[InlineKeyboardButton("📩 ابعت همسة في الخاص", url=deep_link)]]
+    keyboard = [[InlineKeyboardButton("📩 ابعت همس في الخاص", url=deep_link)]]
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🤫 دوس الزرار عشان تبعت همسة لـ {target_user.full_name}",
+        text=f"🤫 دوس الزرار عشان تبعت همس لـ {target_user.full_name}",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     # نمسح رسالة الدعوة دي بعد شوية عشان تفضل نضيفة، من غير ما تأثر لو المسح فشل
@@ -1394,7 +1522,7 @@ async def try_handle_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """في الخاص: لو المستخدم جاي من زرار الهمسة، الرسالة الجاية منه هي محتوى الهمسة."""
+    """في الخاص: لو المستخدم جاي من زرار الهمس، الرسالة الجاية منه هي محتوى الهمس."""
     target_id = context.user_data.get("whisper_target")
     origin_chat_id = context.user_data.get("whisper_origin_chat")
     if target_id is None or origin_chat_id is None:
@@ -1402,8 +1530,8 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
 
     content = (update.message.text or "").strip()
     if not content:
-        await update.message.reply_text("ابعت نص الهمسة (كتابة عادية بس، مش صورة أو صوت أو ستيكر) 🙏")
-        return True  # مسحناش الحالة، فلسه مستنيين نص الهمسة
+        await update.message.reply_text("ابعت نص الهمس (كتابة عادية بس، مش صورة أو صوت أو ستيكر) 🙏")
+        return True  # مسحناش الحالة، فلسه مستنيين نص الهمس
 
     context.user_data["whisper_target"] = None
     context.user_data["whisper_origin_chat"] = None
@@ -1418,7 +1546,7 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
         target_name = "حد في الجروب"
 
     whisper_id = store_whisper(sender.id, sender_name, target_id, content)
-    keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمسة", callback_data=f"whisper_{whisper_id}")]]
+    keyboard = [[InlineKeyboardButton("🔓 اضغط تشوف الهمس", callback_data=f"whisper_{whisper_id}")]]
     # منشن حقيقي بيبعت إشعار للطرفين (الراسل والمستقبِل)
     sender_mention = f'<a href="tg://user?id={sender.id}">{sender_name}</a>'
     target_mention = f'<a href="tg://user?id={target_id}">{target_name}</a>'
@@ -1426,18 +1554,18 @@ async def try_handle_whisper_compose(update: Update, context: ContextTypes.DEFAU
     try:
         await context.bot.send_message(
             chat_id=origin_chat_id,
-            text=f"🤫 همسة جديدة من {sender_mention} لـ {target_mention}",
+            text=f"🤫 همس جديد من {sender_mention} لـ {target_mention}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML",
         )
-        await update.message.reply_text("تم إرسال الهمسة ✅")
+        await update.message.reply_text("تم إرسال الهمس ✅")
         try:
-            await update.message.delete()  # نمسح نص الهمسة من الشات الخاص بينا كمان
+            await update.message.delete()  # نمسح نص الهمس من الشات الخاص بينا كمان
         except Exception:
             pass
     except Exception as e:
         logger.error(f"Whisper delivery failed: {e}")
-        await update.message.reply_text("حصلت مشكلة في إرسال الهمسة، جرب تاني 🙏")
+        await update.message.reply_text("حصلت مشكلة في إرسال الهمس، جرب تاني 🙏")
 
     return True
 
@@ -1448,13 +1576,31 @@ async def whisper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     whisper = get_whisper(whisper_id)
 
     if whisper is None:
-        await query.answer("الهمسة دي خلصت أو مش موجودة 🙅‍♂️", show_alert=True)
+        await query.answer("الهمس ده خلص أو مش موجود 🙅‍♂️", show_alert=True)
         return
 
     clicker_id = update.effective_user.id
     if clicker_id not in (whisper["target_id"], whisper["sender_id"]):
-        await query.answer("الهمسة دي مش ليك 🙅‍♂️", show_alert=True)
+        await query.answer("الهمس ده مش ليك 🙅‍♂️", show_alert=True)
         return
+
+    # لو المستقبِل هو اللي بيفتحها أول مرة، نبلّغ الراسل إنها اتشافت
+    if clicker_id == whisper["target_id"] and clicker_id != whisper["sender_id"] and not whisper["seen"]:
+        mark_whisper_seen(whisper["id"])
+        sender_profile = get_user_profile(whisper["sender_id"])
+        if sender_profile and sender_profile["private_chat_id"]:
+            try:
+                target_chat = await context.bot.get_chat(whisper["target_id"])
+                target_name = target_chat.full_name or target_chat.first_name or "الشخص"
+            except Exception:
+                target_name = "الشخص"
+            try:
+                await context.bot.send_message(
+                    chat_id=sender_profile["private_chat_id"],
+                    text=f"👀 {target_name} شاف الهمس اللي بعتّه له",
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify whisper sender: {e}")
 
     await query.answer(f"🤫 {whisper['sender_name']}:\n{whisper['content']}", show_alert=True)
 
@@ -1473,7 +1619,18 @@ HELP_TEXT = (
     "🔮 فألي - طاقة اليوم\n"
     "🎭 تحليلي - تحليل شخصيتك\n"
     "🎨 /style - تختار أسلوب أنيس (دافئ/مرح/هادئ)\n"
-    "🤫 همسة (رد على رسالة حد واكتب \"انوسة\" أو \"ننوس\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n"
+    "🤫 همس (رد على رسالة حد واكتب \"انوسة\" أو \"ننوس\" بس) - هتوديك في الخاص تبعتله رسالة سرية\n\n"
+    "👑 إدارة الجروب (لأصحاب الرتب بس):\n"
+    "/setrole [رد] مالك/أساسي/مدير/أدمن/مميز - تعيين رتبة\n"
+    "/unrole [رد] - إزالة الرتبة\n"
+    "/roles - عرض كل الرتب في الجروب\n"
+    "/ban [رد] - حظر\n"
+    "/unbangroup <آيدي> - فك الحظر\n"
+    "/mute [رد] - كتم\n"
+    "/unmute [رد] - فك الكتم\n"
+    "/warn [رد] - إنذار (3 إنذارات = حظر تلقائي)\n"
+    "/warnings [رد] - عدد الإنذارات\n"
+    "/resetwarns [رد] - تصفير الإنذارات\n"
 )
 
 
@@ -1713,15 +1870,6 @@ async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_joke(update, context)
 
 
-async def voice_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        voice_buf = await generate_voice_bytes("أهلاً، أنا أنيس، وده اختبار للرسالة الصوتية.")
-        await update.message.reply_audio(audio=voice_buf, title="أنيس")
-    except Exception as e:
-        logger.error(f"Voice test failed: {e}")
-        await update.message.reply_text(f"حصل خطأ في تحويل الصوت: {e}")
-
-
 async def proverb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_proverb(update, context)
 
@@ -1889,6 +2037,60 @@ async def cleanup_old_whispers_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Deleted {deleted} old whisper(s)")
 
 
+# ================= تنبيه قبل الأذان =================
+
+PRAYER_NAMES_AR = {
+    "Fajr": "الفجر", "Dhuhr": "الظهر", "Asr": "العصر", "Maghrib": "المغرب", "Isha": "العشاء",
+}
+PRAYER_REMINDER_MINUTES_BEFORE = 10
+
+
+def fetch_prayer_times_today() -> dict:
+    """بيجيب مواقيت الصلاة النهاردة للقاهرة من موقع Aladhan (مجاني، من غير مفتاح)."""
+    url = "https://api.aladhan.com/v1/timingsByCity"
+    params = {"city": "Cairo", "country": "Egypt", "method": 5}
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    data = response.json()["data"]["timings"]
+    return {name: data[name] for name in PRAYER_NAMES_AR}
+
+
+async def send_prayer_reminder(context: ContextTypes.DEFAULT_TYPE, prayer_name_ar: str):
+    text = f"🕌 أذان {prayer_name_ar} قرّب (بعد {PRAYER_REMINDER_MINUTES_BEFORE} دقايق تقريبًا)، استعدوا للصلاة 🤍"
+    for group in get_all_active_groups():
+        try:
+            await context.bot.send_message(chat_id=group["group_chat_id"], text=text)
+        except Exception as e:
+            logger.error(f"Prayer reminder failed for group {group['group_chat_id']}: {e}")
+
+
+async def prayer_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """بتشتغل مرة كل دقيقة، وتبعت التنبيه لما نكون قربنا من وقت أي صلاة بعشر دقايق."""
+    now = datetime.now(CAIRO_TZ)
+    cache = context.bot_data.get("prayer_times_cache")
+
+    if not cache or cache.get("date") != now.date():
+        try:
+            timings = await asyncio.to_thread(fetch_prayer_times_today)
+            context.bot_data["prayer_times_cache"] = {"date": now.date(), "timings": timings, "notified": set()}
+            cache = context.bot_data["prayer_times_cache"]
+        except Exception as e:
+            logger.error(f"Fetching prayer times failed: {e}")
+            return
+
+    for prayer_key, prayer_name_ar in PRAYER_NAMES_AR.items():
+        if prayer_key in cache["notified"]:
+            continue
+        time_str = cache["timings"][prayer_key].split(" ")[0]  # "HH:MM" من غير أي توقيت زيادة
+        hour, minute = map(int, time_str.split(":"))
+        prayer_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        reminder_dt = prayer_dt - timedelta(minutes=PRAYER_REMINDER_MINUTES_BEFORE)
+
+        if reminder_dt <= now < prayer_dt:
+            await send_prayer_reminder(context, prayer_name_ar)
+            cache["notified"].add(prayer_key)
+
+
 # ================= الرسائل العادية =================
 
 def get_context_key(user_id: int, chat_id: int, is_group: bool) -> str:
@@ -1913,11 +2115,15 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     user_text = update.message.text or ""
     user_id = update.effective_user.id
 
-    # همسة: بتشتغل جوه الجروب من غير ما تحتاج تنادي على البوت بالاسم
+    # همس: بتشتغل جوه الجروب من غير ما تحتاج تنادي على البوت بالاسم
     if await try_handle_whisper(update, context):
         return
 
-    # همسة: المستخدم جاي من الزرار وبيكتب محتوى الهمسة في الخاص
+    # أوامر إدارة الجروب بالعربي (رفع/نزل/حظر/كتم/انذار) - من غير ما تنادي على البوت بالاسم
+    if await try_handle_group_admin_trigger(update, context):
+        return
+
+    # همس: المستخدم جاي من الزرار وبيكتب محتوى الهمس في الخاص
     if is_private and await try_handle_whisper_compose(update, context):
         return
 
@@ -1927,7 +2133,7 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
         is_reply_to_whisper_msg = (
             replied_msg is not None
             and replied_msg.text is not None
-            and replied_msg.text.startswith("🤫 همسة جديدة من")
+            and replied_msg.text.startswith("🤫 همس جديد من")
         )
         replied_to_bot = (
             replied_msg is not None
@@ -1936,6 +2142,15 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
             and not is_reply_to_whisper_msg
         )
         if not (message_mentions_bot(user_text) or replied_to_bot):
+            return
+
+        # اشتراك إجباري - بنستثني حالات الأزمة عشان السلامة أهم من أي حاجة
+        if not contains_crisis_keyword(user_text) and not await is_subscribed_to_required_channel(context, user_id):
+            keyboard = [[InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}")]]
+            await update.message.reply_text(
+                "لازم تكون مشترك في القناة الأول عشان تقدر تكلمني 🙏",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
             return
 
     # مستخدم محظور: نتجاهله تمامًا
@@ -2032,23 +2247,268 @@ async def _handle_message_inner(update: Update, context: ContextTypes.DEFAULT_TY
     if is_private:
         maybe_update_profile(user_id)
 
-    send_as_voice = (
-        is_private
-        and len(reply_text) <= VOICE_MAX_CHARS
-        and random.random() < VOICE_REPLY_CHANCE
-    )
-    if send_as_voice:
-        try:
-            voice_buf = await generate_voice_bytes(reply_text)
-            await update.message.reply_audio(audio=voice_buf, title="أنيس")
-            return
-        except Exception as e:
-            logger.error(f"TTS failed, falling back to text: {e}")
-
     await update.message.reply_text(reply_text)
 
 
-# ================= أوامر الأدمن =================
+# ================= أوامر إدارة الجروب =================
+
+async def _get_target_and_check(update: Update, context: ContextTypes.DEFAULT_TYPE, required_role_rank: int = 0):
+    """بيرجع (target_user, actor_rank, target_rank) أو None لو فيه مشكلة (وبيبعت رسالة الخطأ بنفسه)."""
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("الأمر ده يشتغل جوه الجروبات بس 🙏")
+        return None
+    if update.message.reply_to_message is None:
+        await update.message.reply_text("لازم ترد (Reply) على رسالة الشخص اللي عايز تنفذ عليه الأمر")
+        return None
+
+    target_user = update.message.reply_to_message.from_user
+    if target_user is None or target_user.is_bot:
+        await update.message.reply_text("مينفعش تنفذ الأمر ده على بوت 🙏")
+        return None
+
+    chat_id = update.effective_chat.id
+    actor_id = update.effective_user.id
+    actor_rank = get_user_rank(chat_id, actor_id)
+    target_rank = get_user_rank(chat_id, target_user.id)
+
+    if actor_rank < required_role_rank:
+        await update.message.reply_text("مالكش صلاحية كفاية تعمل الأمر ده 🙅‍♂️")
+        return None
+    if actor_rank <= target_rank:
+        await update.message.reply_text("الشخص ده رتبته أعلى منك أو زيك، مينفعش تنفذ عليه الأمر ده")
+        return None
+
+    return target_user, actor_rank, target_rank
+
+
+async def _perform_setrole(update: Update, context: ContextTypes.DEFAULT_TYPE, target_user, role: str):
+    chat_id = update.effective_chat.id
+    actor_id = update.effective_user.id
+    actor_rank = get_user_rank(chat_id, actor_id)
+    target_rank = get_user_rank(chat_id, target_user.id)
+    new_role_rank = ROLE_RANK[role]
+
+    if actor_rank <= target_rank:
+        await update.message.reply_text("الشخص ده رتبته أعلى منك أو زيك بالفعل")
+        return
+    if not is_admin(actor_id) and new_role_rank >= actor_rank:
+        await update.message.reply_text("مينفعش تدي رتبة أعلى من رتبتك إنت أو زيها")
+        return
+
+    set_group_role(chat_id, target_user.id, role)
+    await update.message.reply_text(f"تمام ✅ {target_user.full_name} بقى {ROLE_LABELS_AR[role]}")
+
+
+async def setrole_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("الأمر ده يشتغل جوه الجروبات بس 🙏")
+        return
+    if update.message.reply_to_message is None:
+        await update.message.reply_text("رد (Reply) على رسالة الشخص واكتب: /setrole مدير (مثلاً)")
+        return
+    if not context.args:
+        await update.message.reply_text("اكتب الرتبة: مالك / أساسي / مدير / أدمن / مميز")
+        return
+
+    role_input = context.args[0]
+    role = ROLE_NAME_TO_KEY.get(role_input)
+    if role is None:
+        await update.message.reply_text("رتبة مش معروفة. اختار من: مالك / أساسي / مدير / أدمن / مميز")
+        return
+
+    target_user = update.message.reply_to_message.from_user
+    if target_user is None or target_user.is_bot:
+        await update.message.reply_text("مينفعش تدي رتبة لبوت 🙏")
+        return
+
+    await _perform_setrole(update, context, target_user, role)
+
+
+async def unrole_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["manager"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    remove_group_role(update.effective_chat.id, target_user.id)
+    await update.message.reply_text(f"تمام ✅ اتشالت كل الرتب من {target_user.full_name}")
+
+
+async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("الأمر ده يشتغل جوه الجروبات بس 🙏")
+        return
+    roles = get_all_group_roles(update.effective_chat.id)
+    if not roles:
+        await update.message.reply_text("مفيش رتب متعينة في الجروب ده لسه")
+        return
+    lines = ["👥 رتب الجروب:\n"]
+    for row in sorted(roles, key=lambda r: -ROLE_RANK.get(r["role"], 0)):
+        lines.append(f"- {ROLE_LABELS_AR.get(row['role'], row['role'])}: آيدي {row['user_id']}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["admin"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    try:
+        await context.bot.ban_chat_member(update.effective_chat.id, target_user.id)
+        await update.message.reply_text(f"🚫 اتحظر {target_user.full_name} من الجروب")
+    except Exception as e:
+        logger.error(f"Ban failed: {e}")
+        await update.message.reply_text("مقدرتش أنفذ الحظر - تأكد إن البوت أدمن وعنده صلاحية حظر الأعضاء")
+
+
+async def unban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("الأمر ده يشتغل جوه الجروبات بس 🙏")
+        return
+    if not context.args:
+        await update.message.reply_text("استخدمه كده: /unbangroup <آيدي الشخص>")
+        return
+    try:
+        target_id = int(context.args[0])
+        await context.bot.unban_chat_member(update.effective_chat.id, target_id, only_if_banned=True)
+        await update.message.reply_text("تمام ✅ اتفك الحظر")
+    except Exception as e:
+        logger.error(f"Unban failed: {e}")
+        await update.message.reply_text("مقدرتش أفك الحظر، تأكد من الآيدي")
+
+
+async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["admin"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    try:
+        await context.bot.restrict_chat_member(
+            update.effective_chat.id, target_user.id,
+            permissions=ChatPermissions(can_send_messages=False),
+        )
+        await update.message.reply_text(f"🔇 اتكتم {target_user.full_name}")
+    except Exception as e:
+        logger.error(f"Mute failed: {e}")
+        await update.message.reply_text("مقدرتش أنفذ الكتم - تأكد إن البوت أدمن وعنده صلاحية تقييد الأعضاء")
+
+
+async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["admin"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    try:
+        await context.bot.restrict_chat_member(
+            update.effective_chat.id, target_user.id,
+            permissions=ChatPermissions(
+                can_send_messages=True, can_send_audios=True, can_send_documents=True,
+                can_send_photos=True, can_send_videos=True, can_send_other_messages=True,
+            ),
+        )
+        await update.message.reply_text(f"🔊 اتفك الكتم عن {target_user.full_name}")
+    except Exception as e:
+        logger.error(f"Unmute failed: {e}")
+        await update.message.reply_text("مقدرتش أفك الكتم")
+
+
+WARN_LIMIT = 3
+
+
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["admin"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    chat_id = update.effective_chat.id
+    count = increment_warning(chat_id, target_user.id)
+
+    if count >= WARN_LIMIT:
+        reset_warnings(chat_id, target_user.id)
+        try:
+            await context.bot.ban_chat_member(chat_id, target_user.id)
+            await update.message.reply_text(
+                f"⚠️ {target_user.full_name} وصل لـ {WARN_LIMIT} إنذارات واتحظر تلقائيًا 🚫"
+            )
+        except Exception as e:
+            logger.error(f"Auto-ban after warnings failed: {e}")
+            await update.message.reply_text(f"⚠️ {target_user.full_name} وصل للحد الأقصى بس مقدرتش أحظره تلقائيًا")
+    else:
+        await update.message.reply_text(f"⚠️ إنذار لـ {target_user.full_name} ({count}/{WARN_LIMIT})")
+
+
+async def warnings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("الأمر ده يشتغل جوه الجروبات بس 🙏")
+        return
+    if update.message.reply_to_message is None:
+        await update.message.reply_text("رد على رسالة الشخص عشان أشوفلك عدد إنذاراته")
+        return
+    target_user = update.message.reply_to_message.from_user
+    count = get_warning_count(update.effective_chat.id, target_user.id)
+    await update.message.reply_text(f"⚠️ {target_user.full_name} عنده {count}/{WARN_LIMIT} إنذارات")
+
+
+async def resetwarns_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await _get_target_and_check(update, context, required_role_rank=ROLE_RANK["admin"])
+    if result is None:
+        return
+    target_user, _, _ = result
+    reset_warnings(update.effective_chat.id, target_user.id)
+    await update.message.reply_text(f"تمام ✅ اتصفرت إنذارات {target_user.full_name}")
+
+
+async def try_handle_group_admin_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """أوامر إدارة بالعربي: رد على رسالة الشخص واكتب "رفع مدير" أو "حظر" أو "كتم" أو "انذار" وهكذا."""
+    if update.effective_chat.type not in ("group", "supergroup"):
+        return False
+    if update.message.reply_to_message is None:
+        return False
+
+    text = (update.message.text or "").strip()
+
+    if text.startswith("رفع "):
+        role_word = text[len("رفع "):].strip()
+        role = ROLE_NAME_TO_KEY.get(role_word)
+        if role is None:
+            return False
+        target_user = update.message.reply_to_message.from_user
+        if target_user is None or target_user.is_bot:
+            await update.message.reply_text("مينفعش تدي رتبة لبوت 🙏")
+            return True
+        await _perform_setrole(update, context, target_user, role)
+        return True
+
+    if text in ("نزل", "نزل الرتبة", "شيل الرتبة"):
+        target_user = update.message.reply_to_message.from_user
+        if target_user is None or target_user.is_bot:
+            return False
+        actor_rank = get_user_rank(update.effective_chat.id, update.effective_user.id)
+        target_rank = get_user_rank(update.effective_chat.id, target_user.id)
+        if actor_rank <= target_rank:
+            await update.message.reply_text("الشخص ده رتبته أعلى منك أو زيك")
+            return True
+        remove_group_role(update.effective_chat.id, target_user.id)
+        await update.message.reply_text(f"تمام ✅ اتشالت كل الرتب من {target_user.full_name}")
+        return True
+
+    if text == "حظر":
+        await ban_command(update, context)
+        return True
+
+    if text == "كتم":
+        await mute_command(update, context)
+        return True
+
+    if text in ("فك كتم", "فك الكتم"):
+        await unmute_command(update, context)
+        return True
+
+    if text in ("انذار", "إنذار"):
+        await warn_command(update, context)
+        return True
+
+    return False
+
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -2178,7 +2638,6 @@ def main():
     app.add_handler(CommandHandler("proverb", proverb_command))
     app.add_handler(CommandHandler("riddle", riddle_command))
     app.add_handler(CommandHandler("trivia", trivia_command))
-    app.add_handler(CommandHandler("voicetest", voice_test_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("fortune", start_fortune))
     app.add_handler(CommandHandler("style", style_command))
@@ -2191,6 +2650,16 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("setrole", setrole_command))
+    app.add_handler(CommandHandler("unrole", unrole_command))
+    app.add_handler(CommandHandler("roles", roles_command))
+    app.add_handler(CommandHandler("ban", ban_command))
+    app.add_handler(CommandHandler("unbangroup", unban_group_command))
+    app.add_handler(CommandHandler("mute", mute_command))
+    app.add_handler(CommandHandler("unmute", unmute_command))
+    app.add_handler(CommandHandler("warn", warn_command))
+    app.add_handler(CommandHandler("warnings", warnings_command))
+    app.add_handler(CommandHandler("resetwarns", resetwarns_command))
     app.add_handler(CommandHandler("banlist", banlist_command))
     app.add_handler(CommandHandler("togglecheckin", toggle_checkin_command))
     app.add_handler(CommandHandler("togglereminder", toggle_reminder_command))
@@ -2211,8 +2680,9 @@ def main():
     job_queue.run_daily(inactivity_reminder_job, time=dtime(hour=18, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(weekly_summary_job, time=dtime(hour=20, minute=0, tzinfo=CAIRO_TZ))
     job_queue.run_daily(future_messages_delivery_job, time=dtime(hour=10, minute=0, tzinfo=CAIRO_TZ))
-    job_queue.run_repeating(hourly_religious_message_job, interval=3600, first=60)
+    job_queue.run_repeating(hourly_religious_message_job, interval=7200, first=60)
     job_queue.run_daily(cleanup_old_whispers_job, time=dtime(hour=4, minute=0, tzinfo=CAIRO_TZ))
+    job_queue.run_repeating(prayer_reminder_job, interval=60, first=10)
 
     logger.info("Bot is running...")
     app.run_polling()
